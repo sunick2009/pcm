@@ -1144,7 +1144,7 @@ void print_csv(PCM * m,
 int main(int argc, char * argv[])
 {
     set_signal_handlers();
-
+    setvbuf(stdout, NULL, _IONBF, 0);
 #ifdef PCM_FORCE_SILENT
     null_stream nullStream1, nullStream2;
     std::cout.rdbuf(&nullStream1);
