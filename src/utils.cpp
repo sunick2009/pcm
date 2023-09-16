@@ -1,24 +1,11 @@
-/*
-Copyright (c) 2009-2018, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the dis
-tribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNES
-S FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDI
-NG, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRI
-CT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2009-2022, Intel Corporation
 // written by Andrey Semin and many others
 
 #include <iostream>
 #include <cassert>
 #include <climits>
+#include <algorithm>
 #ifdef _MSC_VER
 #include <process.h>
 #include <comdef.h>
@@ -28,6 +15,10 @@ CT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 #endif
 #include "utils.h"
 #include "cpucounters.h"
+#include <numeric>
+#ifndef _MSC_VER
+#include <execinfo.h>
+#endif
 
 namespace pcm {
 
@@ -41,7 +32,7 @@ void exit_cleanup(void)
     restore_signal_handlers();
 
     // this replaces same call in cleanup() from util.h
-    PCM::getInstance()->cleanup(); // this replaces same call in cleanup() from util.h
+    if (PCM::isInitialized()) PCM::getInstance()->cleanup(); // this replaces same call in cleanup() from util.h
 
 //TODO: delete other shared objects.... if any.
 
@@ -59,7 +50,7 @@ void print_cpu_details()
     const auto ucode_level = m->getCPUMicrocodeLevel();
     if (ucode_level >= 0)
     {
-        std::cerr << " microcode level 0x" << std::hex << ucode_level;
+        std::cerr << " microcode level 0x" << std::hex << ucode_level << std::dec;
     }
     std::cerr << "\n";
 }
@@ -150,7 +141,7 @@ BOOL sigINT_handler(DWORD fdwCtrlType)
 
     // in case PCM is blocked just return and summary will be dumped in
     // calling function, if needed
-    if (PCM::getInstance()->isBlocked()) {
+    if (PCM::isInitialized() && PCM::getInstance()->isBlocked()) {
         return FALSE;
     } else {
         exit_cleanup();
@@ -186,7 +177,7 @@ void sigINT_handler(int signum)
 
     // in case PCM is blocked just return and summary will be dumped in
     // calling function, if needed
-    if (PCM::getInstance()->isBlocked()) {
+    if (PCM::isInitialized() && PCM::getInstance()->isBlocked()) {
         return;
     } else {
         exit_cleanup();
@@ -199,6 +190,38 @@ void sigINT_handler(int signum)
             _exit(EXIT_SUCCESS);
         }
     }
+}
+
+/**
+ * \brief handles SIGSEGV signals that lead to termination of the program
+ * this function specifically works when the client application launched
+ * by pcm -- terminates
+ */
+constexpr auto BACKTRACE_MAX_STACK_FRAME = 30;
+void sigSEGV_handler(int signum)
+{
+    void *backtrace_buffer[BACKTRACE_MAX_STACK_FRAME] = {0};
+    char **backtrace_strings = NULL;
+    size_t backtrace_size = 0;
+
+    backtrace_size = backtrace(backtrace_buffer, BACKTRACE_MAX_STACK_FRAME);
+    backtrace_strings = backtrace_symbols(backtrace_buffer, backtrace_size);
+    if (backtrace_strings == NULL)
+    {
+        std::cerr << "Debug: backtrace empty. \n";
+    }
+    else
+    {
+        std::cerr << "Debug: backtrace dump(" << backtrace_size << " stack frames).\n";
+        for (size_t i = 0; i < backtrace_size; i++)
+        {
+            std::cerr << backtrace_strings[i] << "\n";
+        }
+        free(backtrace_strings);
+        backtrace_strings = NULL;
+    }
+
+    sigINT_handler(signum);
 }
 
 /**
@@ -278,18 +301,18 @@ void set_signal_handlers(void)
 // to fix Cygwin/BASH setting Ctrl+C handler need first to restore the default one
     handlerStatus = SetConsoleCtrlHandler(NULL, FALSE); // restores normal processing of CTRL+C input
     if (handlerStatus == 0) {
-        std::wcerr << "Failed to set Ctrl+C handler. Error code: " << GetLastError() << " ";
+        tcerr << "Failed to set Ctrl+C handler. Error code: " << GetLastError() << " ";
         const TCHAR * errorStr = _com_error(GetLastError()).ErrorMessage();
-        if (errorStr) std::wcerr << errorStr;
-        std::wcerr << "\n";
+        if (errorStr) tcerr << errorStr;
+        tcerr << "\n";
         _exit(EXIT_FAILURE);
     }
     handlerStatus = SetConsoleCtrlHandler((PHANDLER_ROUTINE)sigINT_handler, TRUE);
     if (handlerStatus == 0) {
-        std::wcerr << "Failed to set Ctrl+C handler. Error code: " << GetLastError() << " ";
+        tcerr << "Failed to set Ctrl+C handler. Error code: " << GetLastError() << " ";
         const TCHAR * errorStr = _com_error(GetLastError()).ErrorMessage();
-        if (errorStr) std::wcerr << errorStr;
-        std::wcerr << "\n";
+        if (errorStr) tcerr << errorStr;
+        tcerr << "\n";
         _exit(EXIT_FAILURE);
     }
     SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&unhandled_exception_handler);
@@ -321,10 +344,14 @@ void set_signal_handlers(void)
     sigaction(SIGQUIT, &saINT, NULL);
     sigaction(SIGABRT, &saINT, NULL);
     sigaction(SIGTERM, &saINT, NULL);
-    sigaction(SIGSEGV, &saINT, NULL);
-
+    
     saINT.sa_flags = SA_RESTART | SA_NOCLDSTOP;
     sigaction(SIGCHLD, &saINT, NULL); // get there is our child exits. do nothing if it stopped/continued
+
+    saINT.sa_handler = sigSEGV_handler;
+    sigemptyset(&saINT.sa_mask);
+    saINT.sa_flags = SA_RESTART;
+    sigaction(SIGSEGV, &saINT, NULL);
 
     // install SIGHUP handler to restart
     saHUP.sa_handler = sigHUP_handler;
@@ -365,6 +392,8 @@ void restore_signal_handlers(void)
 #ifndef _MSC_VER
     struct sigaction action;
     action.sa_handler = SIG_DFL;
+    action.sa_flags = 0;
+    sigemptyset(&action.sa_mask);
 
     sigaction(SIGINT, &action, NULL);
     sigaction(SIGQUIT, &action, NULL);
@@ -496,13 +525,13 @@ void MySystem(char * sysCmd, char ** sysArgv)
         if (PCM::getInstance()->isBlocked()) {
             int res;
             waitpid(child_pid, &res, 0);
-            std::cerr << "Program " << sysCmd << " launched with PID: " << child_pid << "\n";
+            std::cerr << "Program " << sysCmd << " launched with PID: " << std::dec << child_pid << "\n";
 
             if (WIFEXITED(res)) {
                 std::cerr << "Program exited with status " << WEXITSTATUS(res) << "\n";
             }
             else if (WIFSIGNALED(res)) {
-                std::cerr << "Process " << child_pid << " was terminated with status " << WTERMSIG(res);
+                std::cerr << "Process " << child_pid << " was terminated with status " << WTERMSIG(res) << "\n";
             }
         }
     }
@@ -573,8 +602,13 @@ void drawStackedBar(const std::string & label, std::vector<StackedBarItem> & h, 
 
 bool CheckAndForceRTMAbortMode(const char * arg, PCM * m)
 {
-    if (strncmp(arg, "-force-rtm-abort-mode", 21) == 0)
+    if (check_argument_equals(arg, {"-force-rtm-abort-mode"}))
     {
+        if (nullptr == m)
+        {
+            m = PCM::getInstance();
+            assert(m);
+        }
         m->enableForceRTMAbortMode();
         return true;
     }
@@ -638,17 +672,18 @@ int calibratedSleep(const double delay, const char* sysCmd, const MainLoop& main
     return delay_ms;
 };
 
-void print_help_force_rtm_abort_mode(const int alignment)
+void print_help_force_rtm_abort_mode(const int alignment, const char * separator)
 {
     const auto m = PCM::getInstance();
     if (m->isForceRTMAbortModeAvailable() && (m->getMaxCustomCoreEvents() < 4))
     {
-        std::cerr << "  -force-rtm-abort-mode";
+        std::cout << "  -force-rtm-abort-mode";
         for (int i = 0; i < (alignment - 23); ++i)
         {
-            std::cerr << " ";
+            std::cout << " ";
         }
-        std::cerr << "=> force RTM transaction abort mode to enable more programmable counters\n";
+        assert(separator);
+        std::cout << separator << " force RTM transaction abort mode to enable more programmable counters\n";
     }
 }
 
@@ -680,18 +715,509 @@ void print_pid_collection_message(int pid)
     }
 }
 
-void check_and_set_silent(int argc, char * argv[], null_stream &nullStream2) {
+double parse_delay(const char *arg, const std::string& progname, print_usage_func print_usage_func)
+{
+    // any other options positional that is a floating point number is treated as <delay>,
+    // while the other options are ignored with a warning issues to stderr
+    double delay_input = 0.0;
+    std::istringstream is_str_stream(arg);
+    is_str_stream >> std::noskipws >> delay_input;
+    if(is_str_stream.eof() && !is_str_stream.fail())
+    {
+        if (delay_input < 0)
+        {
+            std::cerr << "Invalid delay specified: \"" << *arg << "\". Delay should be positive.\n";
+            if(print_usage_func)
+            {
+                print_usage_func(progname);
+            }
+            exit(EXIT_FAILURE);
+        }
+        return delay_input;
+    }
+    else
+    {
+        std::cerr << "WARNING: unknown command-line option: \"" << *arg << "\". Ignoring it.\n";
+        if(print_usage_func)
+        {
+            print_usage_func(progname);
+        }
+        exit(EXIT_FAILURE);
+    }
+}
+
+bool extract_argument_value(const char* arg, std::initializer_list<const char*> arg_names, std::string& value)
+{
+    const auto arg_len = strlen(arg);
+    for (const auto& arg_name: arg_names) {
+        const auto arg_name_len = strlen(arg_name);
+        if (arg_len > arg_name_len && strncmp(arg, arg_name, arg_name_len) == 0 && arg[arg_name_len] == '=') {
+            value = arg + arg_name_len + 1;
+            const auto last_pos = value.find_last_not_of("\"");
+            if (last_pos != std::string::npos) {
+                value.erase(last_pos + 1);
+            }
+            const auto first_pos = value.find_first_not_of("\"");
+            if (first_pos != std::string::npos) {
+                value.erase(0, first_pos);
+            }
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool check_argument_equals(const char* arg, std::initializer_list<const char*> arg_names)
+{
+    const auto arg_len = strlen(arg);
+    for (const auto& arg_name: arg_names) {
+        if (arg_len == strlen(arg_name) && strncmp(arg, arg_name, arg_len) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void check_and_set_silent(int argc, char * argv[], null_stream &nullStream2)
+{
     if (argc > 1) do
     {
         argv++;
         argc--;
-        if (strncmp(*argv, "-s", 2) == 0 ||
-            strncmp(*argv, "/s", 2) == 0)
+
+        if (check_argument_equals(*argv, {"--help", "-h", "/h"}) ||
+            check_argument_equals(*argv, {"-silent", "/silent"}))
         {
             std::cerr.rdbuf(&nullStream2);
             return;
         }
     } while (argc > 1);
 }
+
+bool check_for_injections(const std::string & str)
+{
+    const std::array<char, 4> symbols = {'=', '+', '-', '@'};
+    if (std::find(std::begin(symbols), std::end(symbols), str[0]) != std::end(symbols)) {
+        std::cerr << "ERROR: First letter in event name: " << str << " cannot be \"" << str[0] << "\" , please use escape \"\\\" or remove it\n";
+        return true;
+    }
+    return false;
+}
+
+void print_enforce_flush_option_help()
+{
+    std::cout << "  -f    | /f                         => enforce flushing output\n";
+}
+
+bool print_version(int argc, char * argv[])
+{
+    if (argc > 1) do
+    {
+        argv++;
+        argc--;
+
+        if (check_argument_equals(*argv, {"--version"}))
+        {
+            std::cout << "version: " << PCM_VERSION << "\n";
+            return true;
+        }
+    } while (argc > 1);
+
+    return false;
+}
+
+std::string dos2unix(std::string in)
+{
+    if (in.length() > 0 && int(in[in.length() - 1]) == 13)
+    {
+        in.erase(in.length() - 1);
+    }
+    return in;
+}
+
+std::string a_title(const std::string &init, const std::string &name) {
+    char begin = init[0];
+    std::string row = init;
+    row += name;
+    return row + begin;
+}
+
+std::string a_data (std::string init, struct data d) {
+    char begin = init[0];
+    std::string row = init;
+    std::string str_d = unit_format(d.value);
+    row += str_d;
+    if (str_d.size() > d.width)
+        throw std::length_error("counter value > event_name length");
+    row += std::string(d.width - str_d.size(), ' ');
+    return row + begin;
+}
+
+std::string build_line(std::string init, std::string name, bool last_char = true, char this_char = '_')
+{
+    char begin = init[0];
+    std::string row = init;
+    row += std::string(name.size(), this_char);
+    if (last_char == true)
+        row += begin;
+    return row;
+}
+
+std::string a_header_footer (std::string init, std::string name)
+{
+    return build_line(init, name);
+}
+
+std::string build_csv_row(const std::vector<std::string>& chunks, const std::string& delimiter)
+{
+    return std::accumulate(chunks.begin(), chunks.end(), std::string(""),
+                           [delimiter](const std::string &left, const std::string &right){
+                               return left.empty() ? right : left + delimiter + right;
+                           });
+}
+
+
+std::vector<struct data> prepare_data(const std::vector<uint64_t> &values, const std::vector<std::string> &headers)
+{
+    std::vector<struct data> v;
+    uint32_t idx = 0;
+    for (std::vector<std::string>::const_iterator iunit = std::next(headers.begin()); iunit != headers.end() && idx < values.size(); ++iunit, idx++)
+    {
+        struct data d;
+        d.width = (uint32_t)iunit->size();
+        d.value = values[idx];
+        v.push_back(d);
+    }
+
+    return v;
+}
+
+void display(const std::vector<std::string> &buff, std::ostream& stream)
+{
+    for (std::vector<std::string>::const_iterator iunit = buff.begin(); iunit != buff.end(); ++iunit)
+        stream << *iunit << "\n";
+    stream << std::flush;
+}
+
+void print_nameMap(std::map<std::string,std::pair<uint32_t,std::map<std::string,uint32_t>>>& nameMap)
+{
+    for (std::map<std::string,std::pair<uint32_t,std::map<std::string,uint32_t>>>::const_iterator iunit = nameMap.begin(); iunit != nameMap.end(); ++iunit)
+    {
+        std::string h_name = iunit->first;
+        std::pair<uint32_t,std::map<std::string,uint32_t>> value = iunit->second;
+        uint32_t hid = value.first;
+        std::map<std::string,uint32_t> vMap = value.second;
+        std::cout << "H name: " << h_name << " id =" << hid << " vMap size:" << vMap.size() << "\n";
+        for (std::map<std::string,uint32_t>::const_iterator junit = vMap.begin(); junit != vMap.end(); ++junit)
+        {
+            std::string v_name = junit->first;
+            uint32_t vid = junit->second;
+            std::cout << "V name: " << v_name << " id =" << vid << "\n";
+        }
+    }
+}
+
+//! \brief load_events: parse the evt config file.
+//! \param fn:event config file name.
+//! \param ofm: operation field map struct.
+//! \param pfn_evtcb: see below.
+//! \param evtcb_ctx: pointer of the callback context(user define).
+//! \param nameMap: human readable metrics names.
+//! \return -1 means fail, 0 means success.
+
+//! \brief pfn_evtcb: call back func of event config file processing, app should provide it.
+//! \param void *: pointer of the callback context.
+//! \param counter &: common base counter struct.
+//! \param std::map<std::string, uint32_t> &: operation field map struct.
+//! \param std::string: event field name.
+//! \param uint64: event field value.
+//! \return -1 means fail with app exit, 0 means success or fail with continue.
+int load_events(const std::string &fn, std::map<std::string, uint32_t> &ofm,
+                int (*pfn_evtcb)(evt_cb_type, void *, counter &, std::map<std::string, uint32_t> &, std::string, uint64),
+                void *evtcb_ctx, std::map<std::string,std::pair<uint32_t,std::map<std::string,uint32_t>>> &nameMap)
+{
+    struct counter ctr;
+
+    std::ifstream in(fn);
+    std::string line, item;
+    if (!in.is_open())
+    {
+        const auto alt_fn = std::string("/usr/share/pcm/") + fn;
+        in.open(alt_fn);
+        if (!in.is_open())
+        {
+            in.close();
+            const auto err_msg = std::string("event config file ") + fn + " or " + alt_fn + " is not available, you can try to manually copy it from PCM source package.";
+            throw std::invalid_argument(err_msg);
+        }
+    }
+
+    while (std::getline(in, line))
+    {
+        //TODO: substring until #, if len == 0, skip, else parse normally
+        //Set default value if the item is NOT available in cfg file.
+        ctr.h_event_name = "INVALID";
+        ctr.v_event_name = "INVALID";
+        ctr.ccr = 0;
+        ctr.idx = 0;
+        ctr.multiplier = 1;
+        ctr.divider = 1;
+        ctr.h_id = 0;
+        ctr.v_id = 0;
+
+        if (pfn_evtcb(EVT_LINE_START, evtcb_ctx, ctr, ofm, "", 0))
+        {
+            in.close();
+            const auto err_msg = std::string("event line processing(start) fault.\n");
+            throw std::invalid_argument(err_msg);
+        }
+
+        /* Ignore anyline with # */
+        if (line.find("#") != std::string::npos)
+            continue;
+        /* If line does not have any deliminator, we ignore it as well */
+        if (line.find("=") == std::string::npos)
+            continue;
+
+        std::string h_name, v_name;
+        std::istringstream iss(line);
+        while (std::getline(iss, item, ','))
+        {
+            std::string key, value;
+            uint64 numValue;
+            /* assume the token has the format <key>=<value> */
+            key = item.substr(0,item.find("="));
+            value = item.substr(item.find("=")+1);
+
+            if (key.empty() || value.empty())
+                continue; //skip the item if the token invalid
+
+            std::istringstream iss2(value);
+            iss2 >> std::setbase(0) >> numValue;
+
+            switch (ofm[key])
+            {
+                case PCM::H_EVENT_NAME:
+                    h_name = dos2unix(value);
+                    ctr.h_event_name = h_name;
+                    if (nameMap.find(h_name) == nameMap.end())
+                    {
+                        /* It's a new horizontal event name */
+                        uint32_t next_h_id = (uint32_t)nameMap.size();
+                        std::pair<uint32_t,std::map<std::string,uint32_t>> nameMap_value(next_h_id, std::map<std::string,uint32_t>());
+                        nameMap[h_name] = nameMap_value;
+                    }
+                    ctr.h_id = (uint32_t)nameMap.size() - 1;
+                    //cout << "h_name:" << ctr.h_event_name << "h_id: "<< ctr.h_id << "\n";
+                    break;
+                case PCM::V_EVENT_NAME:
+                    {
+                        v_name = dos2unix(value);
+                        ctr.v_event_name = v_name;
+                        //XXX: If h_name comes after v_name, we'll have a problem.
+                        //XXX: It's very weird, I forgot to assign nameMap[h_name] = nameMap_value earlier (:298), but this part still works?
+                        std::map<std::string,uint32_t> &v_nameMap = nameMap[h_name].second;
+                        if (v_nameMap.find(v_name) == v_nameMap.end())
+                        {
+                            v_nameMap[v_name] = (unsigned int)v_nameMap.size() - 1;
+                            //cout << "v_name(" << v_name << ")="<< v_nameMap[v_name] << "\n";
+                        }
+                        else
+                        {
+                            in.close();
+                            const auto err_msg = std::string("Detect duplicated v_name:") + v_name + "\n";
+                            throw std::invalid_argument(err_msg);
+                        }
+                        ctr.v_id = (uint32_t)v_nameMap.size() - 1;
+                        //cout << "h_name:" << ctr.h_event_name << ",hid=" << ctr.h_id << ",v_name:" << ctr.v_event_name << ",v_id: "<< ctr.v_id << "\n";
+                        break;
+                    }
+                //TODO: double type for multiplier. drop divider variable
+                case PCM::MULTIPLIER:
+                    ctr.multiplier = (int)numValue;
+                    break;
+                case PCM::DIVIDER:
+                    ctr.divider = (int)numValue;
+                    break;
+                case PCM::COUNTER_INDEX:
+                    ctr.idx = (int)numValue;
+                    break;
+
+                default:
+                    if (pfn_evtcb(EVT_LINE_FIELD, evtcb_ctx, ctr, ofm, key, numValue))
+                    {
+                        in.close();
+                        const auto err_msg = std::string("event line processing(field) fault.\n");
+                        throw std::invalid_argument(err_msg);
+                    }
+                    break;
+            }
+        }
+
+        //std::cout << "Finish parsing: " << line << "\n";
+        if (pfn_evtcb(EVT_LINE_COMPLETE, evtcb_ctx, ctr, ofm, "", 0))
+        {
+            in.close();
+            const auto err_msg = std::string("event line processing(end) fault.\n");
+            throw std::invalid_argument(err_msg);
+        }
+    }
+
+    //print_nameMap(nameMap); //DEBUG purpose
+    in.close();
+    return 0;
+}
+
+int load_events(const std::string &fn, std::map<std::string, uint32_t> &ofm,
+                int (*pfn_evtcb)(evt_cb_type, void *, counter &, std::map<std::string, uint32_t> &, std::string, uint64),
+                void *evtcb_ctx)
+{
+    std::map<std::string,std::pair<uint32_t,std::map<std::string,uint32_t>>> nm;
+    return load_events(fn, ofm, pfn_evtcb, evtcb_ctx, nm);
+}
+
+bool get_cpu_bus(uint32 msmDomain, uint32 msmBus, uint32 msmDev, uint32 msmFunc, uint32 &cpuBusValid, std::vector<uint32> &cpuBusNo, int &cpuPackageId)
+{
+    int cpuBusNo0 = 0x0;
+    uint32 sadControlCfg = 0x0;
+    uint32 busNo = 0x0;
+
+    //std::cout << "get_cpu_bus: d=" << std::hex << msmDomain << ",b=" << msmBus << ",d=" << msmDev << ",f=" << msmFunc << std::dec << " \n";
+    PciHandleType h(msmDomain, msmBus, msmDev, msmFunc);
+
+    h.read32(SPR_MSM_REG_CPUBUSNO_VALID_OFFSET, &cpuBusValid);
+    if (cpuBusValid == (std::numeric_limits<uint32>::max)()) {
+        std::cerr << "Failed to read CPUBUSNO_VALID" << std::endl;
+        return false;
+    }
+
+    for (int i = 0; i < 8; ++i)
+    {
+        busNo = 0x00;
+        if (i <= 3)
+        {
+            h.read32(SPR_MSM_REG_CPUBUSNO0_OFFSET + i*4, &busNo);
+        }
+        else
+        {
+            h.read32(SPR_MSM_REG_CPUBUSNO4_OFFSET + (i-4)*4, &busNo);
+        }
+        if (busNo == (std::numeric_limits<uint32>::max)())
+        {
+            std::cerr << "Failed to read CPUBUSNO" << std::endl;
+            return false;
+        }
+        cpuBusNo.push_back(busNo);
+        //std::cout << std::hex << "get_cpu_bus: busNo=0x" << busNo << std::dec <<  "\n";
+    }
+
+    cpuBusNo0 = cpuBusNo[0] & 0xff;
+    PciHandleType sad_cfg_handler(msmDomain, cpuBusNo0, 0, 0);
+
+    sad_cfg_handler.read32(SPR_SAD_REG_CTL_CFG_OFFSET, &sadControlCfg);
+    if (sadControlCfg == (std::numeric_limits<uint32>::max)())
+    {
+        std::cerr << "Failed to read SAD_CONTROL_CFG" << std::endl;
+        return false;
+    }
+    cpuPackageId = sadControlCfg & 0xf;
+
+    return true;
+}
+
+#ifdef __linux__
+FILE * tryOpen(const char * path, const char * mode)
+{
+    FILE * f = fopen(path, mode);
+    if (!f)
+    {
+        f = fopen((std::string("/pcm") + path).c_str(), mode);
+    }
+    return f;
+}
+
+std::string readSysFS(const char * path, bool silent)
+{
+    FILE * f = tryOpen(path, "r");
+    if (!f)
+    {
+        if (silent == false) std::cerr << "ERROR: Can not open " << path << " file.\n";
+        return std::string();
+    }
+    char buffer[1024];
+    if(NULL == fgets(buffer, 1024, f))
+    {
+        if (silent == false) std::cerr << "ERROR: Can not read from " << path << ".\n";
+        fclose(f);
+        return std::string();
+    }
+    fclose(f);
+    
+    return std::string(buffer);
+}
+
+bool writeSysFS(const char * path, const std::string & value, bool silent)
+{
+    FILE * f = tryOpen(path, "w");
+    if (!f)
+    {
+        if (silent == false) std::cerr << "ERROR: Can not open " << path << " file.\n";
+        return false;
+    }
+    if (fputs(value.c_str(), f) < 0)
+    {
+        if (silent == false) std::cerr << "ERROR: Can not write to " << path << ".\n";
+        fclose(f);
+        return false;
+    }
+    fclose(f);
+    return true;
+}
+
+int readMaxFromSysFS(const char * path)
+{
+    std::string content = readSysFS(path);
+    const char * buffer = content.c_str();
+    int result = -1;
+    pcm_sscanf(buffer) >> s_expect("0-") >> result;
+    if(result == -1)
+    {
+       pcm_sscanf(buffer) >> result;
+    }
+    return result;
+}
+
+bool readMapFromSysFS(const char * path, std::unordered_map<std::string, uint32> &result, bool silent)
+{
+    FILE * f = tryOpen(path, "r");
+    if (!f)
+    {
+        if (silent == false) std::cerr << "ERROR: Can not open " << path << " file.\n";
+        return false;
+    }
+    char buffer[1024];
+    while(fgets(buffer, 1024, f) != NULL)
+    {
+        std::string key, value, item;
+        uint32 numValue = 0;
+
+        item = std::string(buffer);
+        key = item.substr(0,item.find(" "));
+        value = item.substr(item.find(" ")+1);
+        if (key.empty() || value.empty())
+            continue; //skip the item if the token invalid
+        std::istringstream iss2(value);
+        iss2 >> std::setbase(0) >> numValue;
+        result.insert(std::pair<std::string, uint32>(key, numValue));
+        //std::cerr << "readMapFromSysFS:" << key << "=" << numValue << ".\n";
+    }
+
+    fclose(f);
+    return true;
+}
+#endif
 
 } // namespace pcm

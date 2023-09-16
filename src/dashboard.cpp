@@ -1,15 +1,5 @@
-/*
-Copyright (c) 2020, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2020-2022, Intel Corporation
 
 #include <vector>
 #include <memory>
@@ -60,7 +50,7 @@ public:
           "policy": "default",
           "query": "SELECT )PCMDELIMITER";
         result += metric;
-        result += R"PCMDELIMITER( FROM \"http\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+        result += R"PCMDELIMITER( FROM \"http\" WHERE (\"url\" = '$node') AND $timeFilter GROUP BY time($__interval) fill(null)",
           "rawQuery": true,
           "refId": ")PCMDELIMITER";
         result += refId;
@@ -376,10 +366,11 @@ public:
 class Dashboard
 {
     std::string title;
+    PCMDashboardType type;
     std::vector<std::shared_ptr<Panel>> panels;
     Dashboard() = delete;
 public:
-    Dashboard(const std::string & title_) : title(title_) {}
+    Dashboard(const std::string & title_,PCMDashboardType type_) : title(title_), type(type_) {}
     void push(const std::shared_ptr<Panel> & p)
     {
         panels.push_back(p);
@@ -387,6 +378,15 @@ public:
     std::string operator () () const
     {
         std::string result;
+        std::string definition,query;
+        if(type==InfluxDB){
+          definition = "\"SHOW TAG VALUES WITH KEY = \\\"url\\\"\"";
+          query = "\"SHOW TAG VALUES WITH KEY = \\\"url\\\"\"";
+        }
+        else{
+          definition = "\"label_values(Number_of_sockets,instance)\"";
+          query = "{\"query\": \"label_values(Number_of_sockets,instance)\",\"refId\": \"StandardVariableQuery\"}"; 
+        }
         result += R"PCMDELIMITER({
   "annotations": {
     "list": [
@@ -423,7 +423,33 @@ public:
   "style": "dark",
   "tags": [],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "ip addr:port",
+          "value": "ip addr:port"
+        },
+        "datasource": null,
+        "definition": )PCMDELIMITER"; 
+        result +=definition;
+        result += R"PCMDELIMITER(,
+        "hide": 0,
+        "includeAll": false,
+        "label": "Host",
+        "multi": false,
+        "name": "node",
+        "options": [],
+        "query":)PCMDELIMITER";
+         result+=query;
+         result += R"PCMDELIMITER(,
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-5m",
@@ -459,19 +485,19 @@ std::string prometheusMetric(const std::string& m)
 
 std::string prometheusSystem()
 {
-    return "{aggregate=\\\"system\\\"}";
+    return "{instance=\\\"$node\\\", aggregate=\\\"system\\\"}";
 }
 
 std::string prometheusSocket(const std::string& S, const bool aggregate = true)
 {
     if (aggregate)
-        return "{aggregate=\\\"socket\\\", socket=\\\"" + S + "\\\"}";
-    return "{socket=\\\"" + S + "\\\"}";
+        return "{instance=\\\"$node\\\", aggregate=\\\"socket\\\", socket=\\\"" + S + "\\\"}";
+    return "{instance=\\\"$node\\\", socket=\\\"" + S + "\\\"}";
 }
 
 std::string prometheusSystem(const std::string& S)
 {
-    return "{aggregate=\\\"system\\\", socket=\\\"" + S + "\\\"}";
+    return "{instance=\\\"$node\\\", aggregate=\\\"system\\\", socket=\\\"" + S + "\\\"}";
 }
 
 std::string influxDB_Counters(const std::string& S, const std::string& m, const char * domain)
@@ -521,9 +547,9 @@ std::string getPCMDashboardJSON(const PCMDashboardType type, int ns, int nu, int
     const size_t NumUPILinksPerSocket = (nu < 0) ? pcm->getQPILinksPerSocket() : nu;
     const size_t maxCState = (nc < 0) ? PCM::MAX_C_STATE : nc;
 
-    const int height = 5;
-    const int width = 15;
-    const int max_width = 24;
+    constexpr int height = 5;
+    constexpr int width = 15;
+    constexpr int max_width = 24;
     int y = 0;
 
     if (type == Prometheus_Default)
@@ -542,7 +568,7 @@ std::string getPCMDashboardJSON(const PCMDashboardType type, int ns, int nu, int
     {
         hostname = buffer;
     }
-    Dashboard dashboard("Processor Counter Monitor (PCM) Dashboard - " + hostname);
+    Dashboard dashboard("Intel(r) Performance Counter Monitor (Intel(r) PCM) Dashboard - " + hostname,type);
     auto createTarget = [type](const std::string& title, const std::string& inluxdbMetric, const std::string& prometheusExpr) -> std::shared_ptr<Target>
     {
         std::shared_ptr<Target> t;
@@ -597,15 +623,52 @@ std::string getPCMDashboardJSON(const PCMDashboardType type, int ns, int nu, int
             panel->push(t);
             panel1->push(t);
         }
+        for (auto& m : {"CXL Write Mem","CXL Write Cache" }){
+            auto t = createTarget(m, "mean(\\\"QPI/UPI Links_QPI Counters Socket " + S + "_" + m + "\\\")/1048576", prometheusCounters(S, m, false) + "/1048576");
+            panel->push(t);
+            panel1->push(t);
+         }
+        for (std::string m : { "DRAM ", "Persistent Memory " })
+        {
+            auto t = createTarget(m + "Total",
+            "(" + influxDBUncore_Uncore_Counters(S, m + "Writes") + "+" + influxDBUncore_Uncore_Counters(S, m + "Reads") + ")/1048576",
+            "(" + prometheusCounters(S, m + "Writes", false) + "+" + prometheusCounters(S, m + "Reads", false) + ")/1048576");
+            panel->push(t);
+            panel1->push(t);
+        }
         dashboard.push(panel);
         dashboard.push(panel1);
     }
+
+    auto panel = std::make_shared<GraphPanel>(0, y, width, height, "PMEM/DRAM Bandwidth Ratio", "PMEM/DRAM", false);
+    auto panel1 = std::make_shared<BarGaugePanel>(width, y, max_width - width, height, "PMEM/DRAM Bandwidth Ratio");
+    y += height;
+    for (size_t s = 0; s < NumSockets; ++s)
+    {
+        const auto S = std::to_string(s);
+        auto t = createTarget("Socket" + S,
+            "(" + influxDBUncore_Uncore_Counters(S, "Persistent Memory Writes") +
+            "+" + influxDBUncore_Uncore_Counters(S, "Persistent Memory Reads") +
+            ")/" +
+            "(" + influxDBUncore_Uncore_Counters(S, "DRAM Writes") +
+            "+" + influxDBUncore_Uncore_Counters(S, "DRAM Reads") + ")",
+            "(" + prometheusCounters(S, "Persistent Memory Writes", false) +
+            "+" + prometheusCounters(S, "Persistent Memory Reads", false) +
+            ")/" +
+            "(" + prometheusCounters(S, "DRAM Writes", false) +
+            "+" + prometheusCounters(S, "DRAM Reads", false) +")");
+        panel->push(t);
+        panel1->push(t);
+    }
+    dashboard.push(panel);
+    dashboard.push(panel1);
+
     auto upi = [&](const std::string & m, const bool utilization)
     {
         for (size_t s = 0; s < NumSockets; ++s)
         {
             const auto S = std::to_string(s);
-            auto panel = std::make_shared<GraphPanel>(0, y, width, height, std::string("Socket") + S + " UPI " + m, utilization?"%": "MByte/sec", false);
+            auto panel = std::make_shared<GraphPanel>(0, y, width, height, std::string("Socket") + S + " " + pcm->xPI() + " " + m, utilization?"%": "MByte/sec", false);
             std::shared_ptr<Panel> panel1;
             if (utilization)
                 panel1 = std::make_shared<GaugePanel>(width, y, max_width - width, height, std::string("Current Socket") + S + " UPI " + m + " (%)");
@@ -616,7 +679,7 @@ std::string getPCMDashboardJSON(const PCMDashboardType type, int ns, int nu, int
             for (size_t l = 0; l < NumUPILinksPerSocket; ++l)
             {
                 const auto L = std::to_string(l);
-                auto t = createTarget("UPI" + std::to_string(l),
+                auto t = createTarget(pcm->xPI() + std::to_string(l),
                     "mean(\\\"QPI/UPI Links_QPI Counters Socket " + S + "_" + m + " On Link " + L + "\\\")" +  suffix,
                     "rate(" + prometheusMetric(m) + "_On_Link_" + L + prometheusSystem(S) + interval + ")" + suffix);
                 panel->push(t);
@@ -643,8 +706,8 @@ std::string getPCMDashboardJSON(const PCMDashboardType type, int ns, int nu, int
         auto prometheusCStateExpression = [](const std::string& source, const size_t c) -> std::string
         {
             auto C = std::to_string(c);
-            return std::string("100 * rate(RawCStateResidency{ aggregate = \\\"system\\\", index = \\\"") + C + "\\\", source = \\\"" + source + "\\\" }" + interval +
-                ") / ignoring(source, index) rate(Invariant_TSC{ aggregate = \\\"system\\\" }" + interval + ")";
+            return std::string("100 * rate(RawCStateResidency{ instance=\\\"$node\\\", aggregate = \\\"system\\\", index = \\\"") + C + "\\\", source = \\\"" + source + "\\\" }" + interval +
+                ") / ignoring(source, index) rate(Invariant_TSC{ instance=\\\"$node\\\", aggregate = \\\"system\\\" }" + interval + ")";
         };
         auto prometheusComputedCStateExpression = [&maxCState, &prometheusCStateExpression](const std::string& source, const size_t e) -> std::string
         {

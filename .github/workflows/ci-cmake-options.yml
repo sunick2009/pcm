@@ -10,15 +10,12 @@ jobs:
   build:
 
     runs-on: ci-gcc10
-    if: ${{ github.repository != 'opcm/pcm' }}
+    if: ${{ github.repository != 'intel/pcm' }}
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Preparation
-      run: |
-        cd ${{ github.workspace }}/src
-        git clone https://github.com/simdjson/simdjson.git
-        cd ..
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
 
     - name: CMake default install
       run: |
@@ -61,6 +58,15 @@ jobs:
         cmake --version
         rm -rf ${{ github.workspace }}/build
         cmake -B ${{ github.workspace }}/build -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/build -DCMAKE_CXX_FLAGS_CUSTOM:STRING="-O2 -g" -DCMAKE_BUILD_TYPE=CUSTOM
+        cd ${{ github.workspace }}/build
+        export VERBOSE=1
+        make install -j$(nproc)
+
+    - name: CMake Include systemd unit
+      run: |
+        cmake --version
+        rm -rf ${{ github.workspace }}/build
+        cmake -B ${{ github.workspace }}/build -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/build -DLINUX_SYSTEMD=TRUE -DLINUX_SYSTEMD_UNITDIR=${{ github.workspace }}/build/systemd
         cd ${{ github.workspace }}/build
         export VERBOSE=1
         make install -j$(nproc)

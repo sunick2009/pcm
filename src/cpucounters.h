@@ -1,17 +1,8 @@
-/*
-Copyright (c) 2009-2020, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2009-2022, Intel Corporation
 // written by Roman Dementiev
 //            Thomas Willhalm
+//            and others
 
 #ifndef CPUCOUNTERS_HEADER
 #define CPUCOUNTERS_HEADER
@@ -33,11 +24,13 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #undef PCM_UNCORE_PMON_BOX_CHECK_STATUS // debug only
 
 #include "types.h"
+#include "topologyentry.h"
 #include "msr.h"
 #include "pci.h"
 #include "bw.h"
 #include "width_extender.h"
 #include "exceptions/unsupported_processor_exception.hpp"
+#include "uncore_pmu_discovery.h"
 
 #include <vector>
 #include <array>
@@ -71,12 +64,14 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #endif
 #endif
 
+#ifdef __linux__
 #include "resctrl.h"
+#endif
 
 namespace pcm {
 
 #ifdef _MSC_VER
-void PCM_API restrictDriverAccess(LPCWSTR path);
+void PCM_API restrictDriverAccess(LPCTSTR path);
 #endif
 
 class SystemCounterState;
@@ -93,38 +88,6 @@ class SystemRoot;
 
         A set of performance monitoring routines for recent Intel CPUs
 */
-
-struct PCM_API TopologyEntry // describes a core
-{
-    int32 os_id;
-    int32 thread_id;
-    int32 core_id;
-    int32 tile_id; // tile is a constalation of 1 or more cores sharing salem L2 cache. Unique for entire system
-    int32 socket;
-    int32 native_cpu_model = -1;
-    enum CoreType
-    {
-        Atom = 0x20,
-        Core = 0x40,
-        Invalid = -1
-    };
-    CoreType core_type = Invalid;
-
-    TopologyEntry() : os_id(-1), thread_id (-1), core_id(-1), tile_id(-1), socket(-1) { }
-    const char* getCoreTypeStr()
-    {
-        switch (core_type)
-        {
-            case Atom:
-                return "Atom";
-            case Core:
-                return "Core";
-            case Invalid:
-                return "invalid";
-        }
-        return "unknown";
-    }
-};
 
 class HWRegister
 {
@@ -193,11 +156,14 @@ public:
     }
     void operator = (uint64 val) override
     {
+        // std::cout << std::hex << "MMIORegister64 writing " << val << " at offset " << offset << std::dec << std::endl;
         handle->write64(offset, val);
     }
     operator uint64 () override
     {
-        return handle->read64(offset);
+        const uint64 val = handle->read64(offset);
+        // std::cout << std::hex << "MMIORegister64 read " << val << " from offset " << offset << std::dec << std::endl;
+        return val;
     }
 };
 
@@ -213,11 +179,14 @@ public:
     }
     void operator = (uint64 val) override
     {
+        // std::cout << std::hex << "MMIORegister32 writing " << val << " at offset " << offset << std::dec << std::endl;
         handle->write32(offset, (uint32)val);
     }
     operator uint64 () override
     {
-        return (uint64)handle->read32(offset);
+        const uint64 val = (uint64)handle->read32(offset);
+        // std::cout << std::hex << "MMIORegister32 read " << val << " from offset " << offset << std::dec << std::endl;
+        return val;
     }
 };
 
@@ -239,6 +208,7 @@ public:
     {
         uint64 value = 0;
         handle->read(offset, &value);
+        // std::cout << "reading MSR " << offset << " returning " << value << std::endl;
         return value;
     }
 };
@@ -272,51 +242,102 @@ public:
 class UncorePMU
 {
     typedef std::shared_ptr<HWRegister> HWRegisterPtr;
+    uint32 cpu_model_;
+    uint32 getCPUModel();
     HWRegisterPtr unitControl;
 public:
-    HWRegisterPtr counterControl[4];
-    HWRegisterPtr counterValue[4];
+    std::vector<HWRegisterPtr> counterControl;
+    std::vector<HWRegisterPtr> counterValue;
     HWRegisterPtr fixedCounterControl;
     HWRegisterPtr fixedCounterValue;
     HWRegisterPtr filter[2];
 
-    UncorePMU(const HWRegisterPtr & unitControl_,
-        const HWRegisterPtr & counterControl0,
-        const HWRegisterPtr & counterControl1,
-        const HWRegisterPtr & counterControl2,
-        const HWRegisterPtr & counterControl3,
-        const HWRegisterPtr & counterValue0,
-        const HWRegisterPtr & counterValue1,
-        const HWRegisterPtr & counterValue2,
-        const HWRegisterPtr & counterValue3,
-        const HWRegisterPtr & fixedCounterControl_ = HWRegisterPtr(),
-        const HWRegisterPtr & fixedCounterValue_ = HWRegisterPtr(),
-        const HWRegisterPtr & filter0 = HWRegisterPtr(),
-        const HWRegisterPtr & filter1 = HWRegisterPtr()
-    ) :
-        unitControl(unitControl_),
-        counterControl{ counterControl0, counterControl1, counterControl2, counterControl3 },
-        counterValue{ counterValue0, counterValue1, counterValue2, counterValue3 },
-        fixedCounterControl(fixedCounterControl_),
-        fixedCounterValue(fixedCounterValue_),
-        filter{ filter0 , filter1 }
-    {
-    }
-    UncorePMU() {}
+    UncorePMU(const HWRegisterPtr& unitControl_,
+        const HWRegisterPtr& counterControl0,
+        const HWRegisterPtr& counterControl1,
+        const HWRegisterPtr& counterControl2,
+        const HWRegisterPtr& counterControl3,
+        const HWRegisterPtr& counterValue0,
+        const HWRegisterPtr& counterValue1,
+        const HWRegisterPtr& counterValue2,
+        const HWRegisterPtr& counterValue3,
+        const HWRegisterPtr& fixedCounterControl_ = HWRegisterPtr(),
+        const HWRegisterPtr& fixedCounterValue_ = HWRegisterPtr(),
+        const HWRegisterPtr& filter0 = HWRegisterPtr(),
+        const HWRegisterPtr& filter1 = HWRegisterPtr()
+    );
+    UncorePMU(const HWRegisterPtr& unitControl_,
+        const std::vector<HWRegisterPtr> & counterControl_,
+        const std::vector<HWRegisterPtr> & counterValue_,
+        const HWRegisterPtr& fixedCounterControl_ = HWRegisterPtr(),
+        const HWRegisterPtr& fixedCounterValue_ = HWRegisterPtr(),
+        const HWRegisterPtr& filter0 = HWRegisterPtr(),
+        const HWRegisterPtr& filter1 = HWRegisterPtr()
+    );
+    UncorePMU() : cpu_model_(0U) {}
+    size_t size() const { return counterControl.size(); }
     virtual ~UncorePMU() {}
     bool valid() const
     {
         return unitControl.get() != nullptr;
-    }
-    void writeUnitControl(const uint32 value)
-    {
-        *unitControl = value;
     }
     void cleanup();
     void freeze(const uint32 extra);
     bool initFreeze(const uint32 extra, const char* xPICheckMsg = nullptr);
     void unfreeze(const uint32 extra);
     void resetUnfreeze(const uint32 extra);
+};
+
+class IDX_PMU
+{
+    typedef std::shared_ptr<HWRegister> HWRegisterPtr;
+    uint32 cpu_model_;
+    uint32 getCPUModel();
+    bool perf_mode_;
+    uint32 numa_node_;
+    uint32 socket_id_;
+    HWRegisterPtr resetControl;
+    HWRegisterPtr freezeControl;
+public:
+    HWRegisterPtr generalControl;
+    std::vector<HWRegisterPtr> counterControl;
+    std::vector<HWRegisterPtr> counterValue;
+    std::vector<HWRegisterPtr> counterFilterWQ;
+    std::vector<HWRegisterPtr> counterFilterENG;
+    std::vector<HWRegisterPtr> counterFilterTC;
+    std::vector<HWRegisterPtr> counterFilterPGSZ;
+    std::vector<HWRegisterPtr> counterFilterXFERSZ; 
+
+    IDX_PMU(const bool perfMode_,
+        const uint32 numaNode_,
+        const uint32 socketId_,
+        const HWRegisterPtr& resetControl_,
+        const HWRegisterPtr& freezeControl_,
+        const HWRegisterPtr& generalControl_,
+        const std::vector<HWRegisterPtr> & counterControl,
+        const std::vector<HWRegisterPtr> & counterValue,
+        const std::vector<HWRegisterPtr> & counterFilterWQ,
+        const std::vector<HWRegisterPtr> & counterFilterENG,
+        const std::vector<HWRegisterPtr> & counterFilterTC,
+        const std::vector<HWRegisterPtr> & counterFilterPGSZ,
+        const std::vector<HWRegisterPtr> & counterFilterXFERSZ
+    );
+
+    IDX_PMU() : cpu_model_(0U), perf_mode_(false), numa_node_(0), socket_id_(0) {}
+    size_t size() const { return counterControl.size(); }
+    virtual ~IDX_PMU() {}
+    bool valid() const
+    {
+        return resetControl.get() != nullptr;
+    }
+    void cleanup();
+    void freeze();
+    bool initFreeze();
+    void unfreeze();
+    void resetUnfreeze();
+    bool getPERFMode();
+    uint32 getNumaNode() const;
+    uint32 getSocketId() const;
 };
 
 enum ServerUncoreMemoryMetrics
@@ -328,7 +349,7 @@ enum ServerUncoreMemoryMetrics
 };
 
 //! Object to access uncore counters in a socket/processor with microarchitecture codename SandyBridge-EP (Jaketown) or Ivytown-EP or Ivytown-EX
-class ServerPCICFGUncore
+class ServerUncorePMUs
 {
     friend class PCM;
     int32 iMCbus,UPIbus,M2Mbus;
@@ -341,7 +362,8 @@ class ServerPCICFGUncore
     UncorePMUVector m3upiPMUs;
     UncorePMUVector m2mPMUs;
     UncorePMUVector haPMUs;
-    std::vector<UncorePMUVector*> allPMUs{ &imcPMUs, &edcPMUs, &xpiPMUs, &m3upiPMUs , &m2mPMUs, &haPMUs };
+    UncorePMUVector hbm_m2mPMUs;
+    std::vector<UncorePMUVector*> allPMUs{ &imcPMUs, &edcPMUs, &xpiPMUs, &m3upiPMUs , &m2mPMUs, &haPMUs, &hbm_m2mPMUs };
     std::vector<uint64> qpi_speed;
     std::vector<uint32> num_imc_channels; // number of memory channels in each memory controller
     std::vector<std::pair<uint32, uint32> > XPIRegisterLocation; // (device, function)
@@ -350,15 +372,16 @@ class ServerPCICFGUncore
     std::vector<std::pair<uint32, uint32> > EDCRegisterLocation; // EDCRegisterLocation: (device, function)
     std::vector<std::pair<uint32, uint32> > M2MRegisterLocation; // M2MRegisterLocation: (device, function)
     std::vector<std::pair<uint32, uint32> > HARegisterLocation;  // HARegisterLocation: (device, function)
+    std::vector<std::pair<uint32, uint32> > HBM_M2MRegisterLocation; // HBM_M2MRegisterLocation: (device, function)
 
     static std::vector<std::pair<uint32, uint32> > socket2iMCbus;
     static std::vector<std::pair<uint32, uint32> > socket2UPIbus;
     static std::vector<std::pair<uint32, uint32> > socket2M2Mbus;
 
-    ServerPCICFGUncore();                                         // forbidden
-    ServerPCICFGUncore(ServerPCICFGUncore &);                     // forbidden
-    ServerPCICFGUncore & operator = (const ServerPCICFGUncore &); // forbidden
-    PciHandleType * createIntelPerfMonDevice(uint32 groupnr, int32 bus, uint32 dev, uint32 func, bool checkVendor = false);
+    ServerUncorePMUs();                                         // forbidden
+    ServerUncorePMUs(ServerUncorePMUs &);                     // forbidden
+    ServerUncorePMUs & operator = (const ServerUncorePMUs &); // forbidden
+    static PciHandleType * createIntelPerfMonDevice(uint32 groupnr, int32 bus, uint32 dev, uint32 func, bool checkVendor = false);
     void programIMC(const uint32 * MCCntConfig);
     void programEDC(const uint32 * EDCCntConfig);
     void programM2M(const uint64 * M2MCntConfig);
@@ -373,12 +396,12 @@ class ServerPCICFGUncore
     void cleanupMemTest(const MemTestParam & param);
     void cleanupQPIHandles();
     void cleanupPMUs();
-    void writeAllUnitControl(const uint32 value);
     void initDirect(uint32 socket_, const PCM * pcm);
     void initPerf(uint32 socket_, const PCM * pcm);
     void initBuses(uint32 socket_, const PCM * pcm);
     void initRegisterLocations(const PCM * pcm);
     uint64 getPMUCounter(std::vector<UncorePMU> & pmu, const uint32 id, const uint32 counter);
+    bool HBMAvailable() const;
 
 public:
     enum EventPosition {
@@ -399,7 +422,7 @@ public:
     //! \brief Initialize access data structures
     //! \param socket_ socket id
     //! \param pcm pointer to PCM instance
-    ServerPCICFGUncore(uint32 socket_, const PCM * pcm);
+    ServerUncorePMUs(uint32 socket_, const PCM * pcm);
     //! \brief Program performance counters (disables programming power counters)
     void program();
     //! \brief Get the number of integrated controller reads (in cache lines)
@@ -436,7 +459,7 @@ public:
     //! \param port QPI port id
     uint64 getOutgoingFlits(uint32 port);
 
-    ~ServerPCICFGUncore();
+    ~ServerUncorePMUs();
 
     //! \brief Program power counters (disables programming performance counters)
     //! \param mc_profile memory controller measurement profile. See description of profiles in pcm-power.cpp
@@ -464,9 +487,9 @@ public:
     //! \brief Get number DRAM channel cycles
     //! \param channel channel number
     uint64 getDRAMClocks(uint32 channel);
-    //! \brief Get number MCDRAM channel cycles
+    //! \brief Get number HBM channel cycles
     //! \param channel channel number
-    uint64 getMCDRAMClocks(uint32 channel);
+    uint64 getHBMClocks(uint32 channel);
     //! \brief Direct read of memory controller PMU counter (counter meaning depends on the programming: power/performance/etc)
     //! \param channel channel number
     //! \param counter counter number
@@ -535,11 +558,14 @@ class SimpleCounterState
 public:
     SimpleCounterState() : data(0)
     { }
+    uint64 getRawData() const {return data;}
     virtual ~SimpleCounterState() { }
 };
 
 typedef SimpleCounterState PCIeCounterState;
 typedef SimpleCounterState IIOCounterState;
+typedef SimpleCounterState IDXCounterState;
+
 typedef std::vector<uint64> eventGroup_t;
 
 class PerfVirtualControlRegister;
@@ -558,7 +584,7 @@ class PCM_API PCM
     friend class ServerUncore;
     friend class PerfVirtualControlRegister;
     friend class Aggregator;
-    friend class ServerPCICFGUncore;
+    friend class ServerUncorePMUs;
     PCM();     // forbidden to call directly because it is a singleton
     PCM(const PCM &) = delete;
     PCM & operator = (const PCM &) = delete;
@@ -602,15 +628,19 @@ class PCM_API PCM
     static PCM * instance;
     bool programmed_core_pmu{false};
     std::vector<std::shared_ptr<SafeMsrHandle> > MSR;
-    std::vector<std::shared_ptr<ServerPCICFGUncore> > server_pcicfg_uncore;
+    std::vector<std::shared_ptr<ServerUncorePMUs> > serverUncorePMUs;
     std::vector<UncorePMU> pcuPMUs;
     std::vector<std::map<int32, UncorePMU> > iioPMUs;
     std::vector<std::map<int32, UncorePMU> > irpPMUs;
     std::vector<UncorePMU> uboxPMUs;
+    std::vector<std::vector<IDX_PMU> > idxPMUs;
+
     double joulesPerEnergyUnit;
     std::vector<std::shared_ptr<CounterWidthExtender> > energy_status;
     std::vector<std::shared_ptr<CounterWidthExtender> > dram_energy_status;
     std::vector<std::vector<UncorePMU> > cboPMUs;
+    std::vector<std::vector<UncorePMU> > mdfPMUs;
+    std::vector<std::vector<std::pair<UncorePMU, UncorePMU>>> cxlPMUs; // socket X CXL ports X UNIT {0,1}
 
     std::vector<std::shared_ptr<CounterWidthExtender> > memory_bw_local;
     std::vector<std::shared_ptr<CounterWidthExtender> > memory_bw_total;
@@ -627,6 +657,8 @@ class PCM_API PCM
     std::shared_ptr<CounterWidthExtender> clientIoRequests;
 
     std::vector<std::shared_ptr<ServerBW> > serverBW;
+
+    std::shared_ptr<UncorePMUDiscovery> uncorePMUDiscovery;
 
     bool disable_JKT_workaround;
     bool blocked;              // track if time-driven counter update is running or not: PCM is blocked
@@ -747,8 +779,7 @@ public:
         IIO_PCIe1 = 2,
         IIO_PCIe2 = 3,
         IIO_MCP0 = 4,
-        IIO_MCP1 = 5,
-        IIO_STACK_COUNT = 6
+        IIO_MCP1 = 5
     };
 
     // Offsets/enumeration of IIO stacks Skylake server.
@@ -781,6 +812,28 @@ public:
         SNR_IIO_HQM         = 3,
         SNR_IIO_PCIe0       = 4,
         SNR_IIO_STACK_COUNT = 5
+    };
+
+    enum IDX_IP
+    {
+        IDX_IAA = 0,
+        IDX_DSA,
+        IDX_QAT,
+        IDX_MAX
+    };
+
+    enum IDX_OPERATION
+    {
+        QAT_TLM_STOP = 0,
+        QAT_TLM_START,
+        QAT_TLM_REFRESH,
+        QAT_TLM_MAX
+    };
+
+    enum IDX_STATE
+    {
+        IDX_STATE_OFF = 0,
+        IDX_STATE_ON,
     };
 
     struct SimplePCIeDevInfo
@@ -839,10 +892,13 @@ public:
         int divider[4]; //We usually like to have some kind of divider (i.e. /10e6 )
     };
 
-    enum MSREventPosition
+    struct MSREventPosition
     {
-        index = 0,
-        type = 1
+        enum constants
+        {
+            index = 0,
+            type = 1
+        };
     };
     enum MSRType
     {
@@ -880,7 +936,7 @@ private:
         PERF_TOPDOWN_RETIRING_POS = PERF_TOPDOWN_SLOTS_POS + 4
     };
 
-    std::unordered_map<int, int> perfTopDownPos;
+    std::array<int, (PERF_TOPDOWN_RETIRING_POS + 1)> perfTopDownPos;
 
     enum {
         PERF_GROUP_LEADER_COUNTER = PERF_INST_RETIRED_POS,
@@ -893,6 +949,7 @@ private:
     int run_state;                 // either running (1) or sleeping (0)
 
     bool needToRestoreNMIWatchdog;
+    bool cleanupPEBS{false};
 
     std::vector<std::vector<EventSelectRegister> > lastProgrammedCustomCounters;
     uint32 checkCustomCoreProgramming(std::shared_ptr<SafeMsrHandle> msr);
@@ -949,13 +1006,19 @@ private:
     void readAndAggregatePackageCStateResidencies(std::shared_ptr<SafeMsrHandle> msr, CounterStateType & result);
 public:
     struct RawPMUConfig;
+    void programCXLCM();
+    template <class CounterStateType>
+    void readAndAggregateCXLCMCounters(CounterStateType & counterState);
+
 private:
     template <class CounterStateType>
     void readMSRs(std::shared_ptr<SafeMsrHandle> msr, const RawPMUConfig & msrConfig, CounterStateType & result);
     void readQPICounters(SystemCounterState & counterState);
+    void readPCICFGRegisters(SystemCounterState& result);
     void reportQPISpeed() const;
     void readCoreCounterConfig(const bool complainAboutMSR = false);
     void readCPUMicrocodeLevel();
+    void globalFreezeUncoreCountersInternal(const unsigned long long int freeze);
 
     uint64 CX_MSR_PMON_CTRY(uint32 Cbo, uint32 Ctr) const;
     uint64 CX_MSR_PMON_BOX_FILTER(uint32 Cbo) const;
@@ -972,13 +1035,21 @@ private:
     {
         if (!eventsBegin) return;
         Iterator curEvent = eventsBegin;
-        for (int c = 0; curEvent != eventsEnd; ++c, ++curEvent)
+        const auto cpu_model = PCM::getInstance()->getCPUModel();
+        for (int c = 0; curEvent != eventsEnd && size_t(c) < pmu.size(); ++c, ++curEvent)
         {
             auto ctrl = pmu.counterControl[c];
             if (ctrl.get() != nullptr)
             {
-                *ctrl = MC_CH_PCI_PMON_CTL_EN;
-                *ctrl = MC_CH_PCI_PMON_CTL_EN | *curEvent;
+                if (PCM::SPR == cpu_model)
+                {
+                    *ctrl = *curEvent;
+                }
+                else
+                {
+                    *ctrl = MC_CH_PCI_PMON_CTL_EN;
+                    *ctrl = MC_CH_PCI_PMON_CTL_EN | *curEvent;
+                }
             }
         }
         if (extra)
@@ -988,7 +1059,8 @@ private:
     }
     void programPCU(uint32 * events, const uint64 filter);
     void programUBOX(const uint64* events);
-
+    void programCXLDP(const uint64* events);
+    void programCXLCM(const uint64* events);
     void cleanupUncorePMUs(const bool silent = false);
 
     bool isCLX() const // Cascade Lake-SP
@@ -1011,6 +1083,8 @@ private:
     bool isRDTDisabled() const;
 
 public:
+    static bool isInitialized() { return instance != nullptr; }
+
     //! check if TMA level 1 metrics are supported
     bool isHWTMAL1Supported() const;
 
@@ -1019,13 +1093,21 @@ public:
         TOR_OCCUPANCY = 0,
         TOR_INSERTS = 1,
         REQUESTS_ALL = 2,
-        REQUESTS_LOCAL = 3
+        REQUESTS_LOCAL = 3,
+        CXL_TxC_MEM = 0,   // works only on counters 0-3
+        CXL_TxC_CACHE = 1  // works only on counters 0-3
     };
     //! check if in secure boot mode
     bool isSecureBoot() const;
 
     //! true if Linux perf for uncore PMU programming should AND can be used internally
     bool useLinuxPerfForUncore() const;
+
+    //! true if the CPU is hybrid
+    bool isHybrid() const
+    {
+        return hybrid;
+    }
 
     /*!
              \brief The system, sockets, uncores, cores and threads are structured like a tree
@@ -1081,6 +1163,26 @@ public:
 
     //! \brief Returns the number of IIO stacks per socket
     uint32 getMaxNumOfIIOStacks() const;
+
+    //! \brief Returns the number of MDFs boxes per socket
+    uint32 getMaxNumOfMDFs() const;
+
+    /*! \brief Returns the number of IDX accel devs
+        \param accel index of IDX accel
+    */
+    uint32 getNumOfIDXAccelDevs(int accel) const;
+
+    //! \brief Returns the number of IDX counters
+    uint32 getMaxNumOfIDXAccelCtrs(int accel) const;
+
+    //! \brief Returns the numa node of IDX accel dev
+    uint32 getNumaNodeOfIDXAccelDev(uint32 accel, uint32 dev) const;
+
+    //! \brief Returns the socketid of IDX accel dev
+    uint32 getCPUSocketIdOfIDXAccelDev(uint32 accel, uint32 dev) const;
+
+    //! \brief Returns the platform support IDX accel dev or NOT
+    bool supportIDXAccelDev() const;
 
     /*!
             \brief Returns PCM object
@@ -1175,7 +1277,8 @@ public:
     // vector of IDs. E.g. for core {raw event} or {raw event, offcore response1 msr value, } or {raw event, offcore response1 msr value, offcore response2}
     // or for cha/cbo {raw event, filter value}, etc
     // + user-supplied name
-    typedef std::pair<std::array<uint64, 5>, std::string> RawEventConfig;
+    typedef std::array<uint64, 6> RawEventEncoding;
+    typedef std::pair<RawEventEncoding, std::string> RawEventConfig;
     struct RawPMUConfig
     {
         std::vector<RawEventConfig> programmable;
@@ -1190,6 +1293,46 @@ public:
     typedef std::map<std::string, RawPMUConfig> RawPMUConfigs;
     ErrorCode program(const RawPMUConfigs& curPMUConfigs, const bool silent = false, const int pid = -1);
 
+    struct PCICFGEventPosition
+    {
+        enum constants
+        {
+            deviceID = 0,
+            offset = 1,
+            type = 2,
+            width = 5
+        };
+    };
+    typedef std::pair<std::shared_ptr<PciHandleType>, uint32> PCICFGRegisterEncoding; // PciHandleType shared ptr, offset
+    struct PCICFGRegisterEncodingHash
+    {
+        std::size_t operator()(const RawEventEncoding & e) const
+        {
+            std::size_t h1 = std::hash<uint64>{}(e[PCICFGEventPosition::deviceID]);
+            std::size_t h2 = std::hash<uint64>{}(e[PCICFGEventPosition::offset]);
+            std::size_t h3 = std::hash<uint64>{}(e[PCICFGEventPosition::width]);
+            return h1 ^ (h2 << 1ULL) ^ (h3 << 2ULL);
+        }
+    };
+    struct PCICFGRegisterEncodingCmp
+    {
+        bool operator ()(const RawEventEncoding& a, const RawEventEncoding& b) const
+        {
+            return a[PCICFGEventPosition::deviceID] == b[PCICFGEventPosition::deviceID]
+                && a[PCICFGEventPosition::offset] == b[PCICFGEventPosition::offset]
+                && a[PCICFGEventPosition::width] == b[PCICFGEventPosition::width];
+        }
+    };
+private:
+    std::unordered_map<RawEventEncoding, std::vector<PCICFGRegisterEncoding>, PCICFGRegisterEncodingHash, PCICFGRegisterEncodingCmp> PCICFGRegisterLocations{};
+public:
+
+    TopologyEntry::CoreType getCoreType(const unsigned coreID) const
+    {
+        assert(coreID < topology.size());
+        return topology[coreID].core_type;
+    }
+
     std::pair<unsigned, unsigned> getOCREventNr(const int event, const unsigned coreID) const
     {
        assert (coreID < topology.size());
@@ -1198,6 +1341,7 @@ public:
             switch (cpu_model)
             {
             case ADL:
+            case RPL:
                 if (topology[coreID].core_type == TopologyEntry::Atom)
                 {
                     return std::make_pair(OFFCORE_RESPONSE_0_EVTNR, event + 1);
@@ -1208,7 +1352,9 @@ public:
        bool useGLCOCREvent = false;
        switch (cpu_model)
        {
+       case SPR:
        case ADL: // ADL big core (GLC)
+       case RPL:
            useGLCOCREvent = true;
            break;
        }
@@ -1223,10 +1369,16 @@ public:
        return std::make_pair(0U, 0U);
     }
 
-    //! \brief Freezes uncore event counting (works only on microarchitecture codename SandyBridge-EP and IvyTown)
+    //! \brief Freezes uncore event counting using global control MSR
+    void globalFreezeUncoreCounters();
+
+    //! \brief Unfreezes uncore event counting using global control MSR
+    void globalUnfreezeUncoreCounters();
+
+    //! \brief Freezes uncore event counting
     void freezeServerUncoreCounters();
 
-    //! \brief Unfreezes uncore event counting (works only on microarchitecture codename SandyBridge-EP and IvyTown)
+    //! \brief Unfreezes uncore event counting
     void unfreezeServerUncoreCounters();
 
     /*! \brief Reads the power/energy counter state of a socket (works only on microarchitecture codename SandyBridge-EP)
@@ -1373,6 +1525,7 @@ public:
         AVOTON = 77,
         CHERRYTRAIL = 76,
         APOLLO_LAKE = 92,
+        GEMINI_LAKE = 122,
         DENVERTON = 95,
         SNOWRIDGE = 134,
         CLARKDALE = 37,
@@ -1401,12 +1554,18 @@ public:
         TGL = 140,
         TGL_1 = 141,
         ADL = 151,
+        ADL_1 = 154,
+        RPL = 0xb7,
+        RPL_1 = 0xba,
+        RPL_2 = 0xbf,
+        RPL_3 = 0xbe,
         BDX = 79,
         KNL = 87,
         SKL = 94,
         SKX = 85,
         ICX_D = 108,
         ICX = 106,
+        SPR = 143,
         END_OF_MODEL_LIST = 0x0ffff
     };
 
@@ -1430,7 +1589,7 @@ private:
         }
         return false;
     }
-    RawPMUConfig threadMSRConfig{}, packageMSRConfig{};
+    RawPMUConfig threadMSRConfig{}, packageMSRConfig{}, pcicfgConfig{};
 public:
 
     //! \brief Reads CPU model id
@@ -1461,6 +1620,16 @@ public:
     //! \return socket identifier
     int32 getSocketId(uint32 core_id) const { return (int32)topology[core_id].socket; }
 
+
+    size_t getNumCXLPorts(uint32 socket) const
+    {
+        if (socket < cxlPMUs.size())
+        {
+            return cxlPMUs[socket].size();
+        }
+        return 0;
+    }
+
     //! \brief Returns the number of Intel(r) Quick Path Interconnect(tm) links per socket
     //! \return number of QPI links per socket
     uint64 getQPILinksPerSocket() const
@@ -1484,7 +1653,8 @@ public:
         case BDX:
         case SKX:
         case ICX:
-            return (server_pcicfg_uncore.size() && server_pcicfg_uncore[0].get()) ? (server_pcicfg_uncore[0]->getNumQPIPorts()) : 0;
+        case SPR:
+            return (serverUncorePMUs.size() && serverUncorePMUs[0].get()) ? (serverUncorePMUs[0]->getNumQPIPorts()) : 0;
         }
         return 0;
     }
@@ -1507,9 +1677,10 @@ public:
         case BDX_DE:
         case SKX:
         case ICX:
+        case SPR:
         case BDX:
         case KNL:
-            return (server_pcicfg_uncore.size() && server_pcicfg_uncore[0].get()) ? (server_pcicfg_uncore[0]->getNumMC()) : 0;
+            return (serverUncorePMUs.size() && serverUncorePMUs[0].get()) ? (serverUncorePMUs[0]->getNumMC()) : 0;
         }
         return 0;
     }
@@ -1532,10 +1703,11 @@ public:
         case BDX_DE:
         case SKX:
         case ICX:
+        case SPR:
         case BDX:
         case KNL:
         case SNOWRIDGE:
-            return (server_pcicfg_uncore.size() && server_pcicfg_uncore[0].get()) ? (server_pcicfg_uncore[0]->getNumMCChannels()) : 0;
+            return (serverUncorePMUs.size() && serverUncorePMUs[0].get()) ? (serverUncorePMUs[0]->getNumMCChannels()) : 0;
         }
         return 0;
     }
@@ -1560,10 +1732,11 @@ public:
         case BDX_DE:
         case SKX:
         case ICX:
+        case SPR:
         case BDX:
         case KNL:
         case SNOWRIDGE:
-            return (socket < server_pcicfg_uncore.size() && server_pcicfg_uncore[socket].get()) ? (server_pcicfg_uncore[socket]->getNumMCChannels(controller)) : 0;
+            return (socket < serverUncorePMUs.size() && serverUncorePMUs[socket].get()) ? (serverUncorePMUs[socket]->getNumMCChannels(controller)) : 0;
         }
         return 0;
     }
@@ -1575,7 +1748,7 @@ public:
         switch (cpu_model)
         {
         case KNL:
-            return (server_pcicfg_uncore.size() && server_pcicfg_uncore[0].get()) ? (server_pcicfg_uncore[0]->getNumEDCChannels()) : 0;
+            return (serverUncorePMUs.size() && serverUncorePMUs[0].get()) ? (serverUncorePMUs[0]->getNumEDCChannels()) : 0;
         }
         return 0;
     }
@@ -1589,6 +1762,7 @@ public:
         switch (cpu_model)
         {
         case ADL:
+        case RPL:
             return 6;
         case SNOWRIDGE:
             return 4;
@@ -1615,6 +1789,8 @@ public:
             return 2;
         case ICX:
             return 5;
+        case SPR:
+            return 6;
         }
         if (isAtom())
         {
@@ -1663,6 +1839,7 @@ public:
         case SKX:
         case ICX:
         case SNOWRIDGE:
+        case SPR:
         case KNL:
             return true;
         default:
@@ -1691,7 +1868,7 @@ public:
     //! \return QPI Link Speed in GBytes/second
     uint64 getQPILinkSpeed(uint32 socketNr, uint32 linkNr) const
     {
-        return hasPCICFGUncore() ? server_pcicfg_uncore[socketNr]->getQPILinkSpeed(linkNr) : max_qpi_speed;
+        return hasPCICFGUncore() ? serverUncorePMUs[socketNr]->getQPILinkSpeed(linkNr) : max_qpi_speed;
     }
 
     //! \brief Returns how many joules are in an internal processor energy unit
@@ -1774,6 +1951,10 @@ public:
     //! \param filter1 raw filter1 value
     void programCboRaw(const uint64* events, const uint64 filter0, const uint64 filter1);
 
+    //! \brief Program MDF counters
+    //! \param events array with four raw event values
+    void programMDF(const uint64* events);
+
     //! \brief Get the state of PCIe counter(s)
     //! \param socket_ socket of the PCIe controller
     //! \return State of PCIe counter(s)
@@ -1789,6 +1970,21 @@ public:
     //! \param IIOStack id of the IIO stack to program (-1 for all, if parameter omitted)
     void programIRPCounters(uint64 rawEvents[4], int IIOStack = -1);
 
+    //! \brief Control QAT telemetry service
+    //! \param dev device index
+    //! \param operation control code 
+    void controlQATTelemetry(uint32 dev, uint32 operation);
+
+    //! \brief Program IDX events
+    //! \param events config of event to program
+    //! \param filters_wq filters(work queue) of event to program 
+    //! \param filters_eng filters(engine) of event to program 
+    //! \param filters_tc filters(traffic class) of event to program 
+    //! \param filters_pgsz filters(page size) of event to program 
+    //! \param filters_xfersz filters(transfer size) of event to program 
+    void programIDXAccelCounters(uint32 accel, std::vector<uint64_t> &events, std::vector<uint32> &filters_wq, std::vector<uint32> &filters_eng, std::vector<uint32> &filters_tc, std::vector<uint32> &filters_pgsz, std::vector<uint32> &filters_xfersz);
+
+
     //! \brief Get the state of IIO counter
     //! \param socket socket of the IIO stack
     //! \param IIOStack id of the IIO stack
@@ -1800,6 +1996,14 @@ public:
     //! \param IIOStack id of the IIO stack
     //! \param result states of IIO counters (array of four IIOCounterState elements)
     void getIIOCounterStates(int socket, int IIOStack, IIOCounterState * result);
+
+
+    //! \brief Get the state of IDX accel counter
+    //! \param accel ip index
+    //! \param dev device index
+    //! \param counter_id perf counter index
+    //! \return State of IDX counter
+    IDXCounterState getIDXAccelCounterState(uint32 accel, uint32 dev, uint32 counter_id);
 
     uint64 extractCoreGenCounterValue(uint64 val);
     uint64 extractCoreFixedCounterValue(uint64 val);
@@ -1841,6 +2045,7 @@ public:
             || cpu_model_ == AVOTON
             || cpu_model_ == CHERRYTRAIL
             || cpu_model_ == APOLLO_LAKE
+            || cpu_model_ == GEMINI_LAKE
             || cpu_model_ == DENVERTON
             // || cpu_model_ == SNOWRIDGE do not use Atom code for SNOWRIDGE
             ;
@@ -1850,6 +2055,22 @@ public:
     bool isAtom() const
     {
         return isAtom(cpu_model);
+    }
+
+    // From commit message: https://github.com/torvalds/linux/commit/e979121b1b1556e184492e6fc149bbe188fc83e6
+    bool memoryEventErrata() const
+    {
+        switch (cpu_model)
+        {
+            case SANDY_BRIDGE:
+            case JAKETOWN:
+            case IVYTOWN:
+            case IVY_BRIDGE:
+            case HASWELL:
+            case HASWELLX:
+                return true;
+        }
+        return false;
     }
 
     bool packageEnergyMetricsAvailable() const
@@ -1864,6 +2085,7 @@ public:
                  || cpu_model == PCM::CHERRYTRAIL
                  || cpu_model == PCM::BAYTRAIL
                  || cpu_model == PCM::APOLLO_LAKE
+                 || cpu_model == PCM::GEMINI_LAKE
                  || cpu_model == PCM::DENVERTON
                  || cpu_model == PCM::SNOWRIDGE
                  || cpu_model == PCM::HASWELLX
@@ -1875,6 +2097,8 @@ public:
                  || cpu_model == PCM::SKX
                  || cpu_model == PCM::ICX
                  || cpu_model == PCM::ADL
+                 || cpu_model == PCM::RPL
+                 || cpu_model == PCM::SPR
                );
     }
 
@@ -1889,6 +2113,7 @@ public:
           || cpu_model == PCM::KNL
           || cpu_model == PCM::SKX
           || cpu_model == PCM::ICX
+          || cpu_model == PCM::SPR
           );
     }
 
@@ -1909,6 +2134,7 @@ public:
             ||  cpu_model == PCM::BDX
             ||  cpu_model == PCM::SKX
             ||  cpu_model == PCM::ICX
+           ||  cpu_model == PCM::SPR
             );
     }
 
@@ -1922,6 +2148,7 @@ public:
             ||  cpu_model == PCM::IVYTOWN
             || (cpu_model == PCM::SKX && cpu_stepping > 1)
             ||  cpu_model == PCM::ICX
+           ||  cpu_model == PCM::SPR
                );
     }
 
@@ -1945,9 +2172,14 @@ public:
                ;
     }
 
-    bool MCDRAMmemoryTrafficMetricsAvailable() const
+    bool HBMmemoryTrafficMetricsAvailable() const
     {
-        return (cpu_model == PCM::KNL);
+        return serverUncorePMUs.empty() == false && serverUncorePMUs[0].get() != nullptr && serverUncorePMUs[0]->HBMAvailable();
+    }
+
+    size_t getHBMCASTransferSize() const
+    {
+        return (SPR == cpu_model) ? 32ULL : 64ULL;
     }
 
     bool memoryIOTrafficMetricAvailable() const
@@ -1967,7 +2199,8 @@ public:
         return (
                cpu_model == PCM::SKX
             || cpu_model == PCM::ICX
-	    || cpu_model  == PCM::SNOWRIDGE
+	        || cpu_model  == PCM::SNOWRIDGE
+            || cpu_model == PCM::SPR
         );
     }
 
@@ -1983,6 +2216,7 @@ public:
             || cpu_model == PCM::BDX
             || cpu_model == PCM::SKX
             || cpu_model == PCM::ICX
+            || cpu_model == PCM::SPR
             || useSKLPath()
             );
     }
@@ -1992,6 +2226,7 @@ public:
         return (
             cpu_model == PCM::SKX
             || cpu_model == PCM::ICX
+            || cpu_model == PCM::SPR
             );
     }
 
@@ -2002,7 +2237,23 @@ public:
                     ||  isCPX()
                      || cpu_model == PCM::ICX
                      || cpu_model == PCM::SNOWRIDGE
+                     || cpu_model == SPR
         );
+    }
+
+    bool PMMMemoryModeMetricsAvailable() const
+    {
+       return (
+                  isCLX()
+               || isCPX()
+               || cpu_model == PCM::ICX
+               || cpu_model == PCM::SNOWRIDGE
+              );
+    }
+
+    bool PMMMixedModeMetricsAvailable() const
+    {
+       return PMMMemoryModeMetricsAvailable();
     }
 
     bool LLCReadMissLatencyMetricsAvailable() const
@@ -2019,6 +2270,7 @@ public:
             || ((SKX == cpu_model) && (num_sockets == 1))
 #endif
             || ICX == cpu_model
+            || SPR == cpu_model
             || SNOWRIDGE == cpu_model
                );
     }
@@ -2040,6 +2292,7 @@ public:
             || cpu_model == PCM::BDX_DE
             || cpu_model == PCM::SKX
             || cpu_model == PCM::ICX
+            || cpu_model == PCM::SPR
             || cpu_model == PCM::BDX
             || cpu_model == PCM::KNL
             );
@@ -2057,6 +2310,7 @@ public:
         return (
             cpu_model_ == PCM::SKX
          || cpu_model_ == PCM::ICX
+         || cpu_model_ == PCM::SPR
                );
     }
 
@@ -2078,6 +2332,7 @@ public:
         return (
             cpu_model == PCM::SKX
          || cpu_model == PCM::ICX
+         || cpu_model == PCM::SPR
                );
     }
 
@@ -2090,6 +2345,7 @@ public:
         return    useSKLPath()
                || PCM::SKX == cpu_model
                || PCM::ICX == cpu_model
+               || PCM::SPR == cpu_model
                ;
     }
 
@@ -2099,6 +2355,8 @@ public:
             || cpu_model == IVY_BRIDGE
             || cpu_model == HASWELL
             || cpu_model == BROADWELL
+            || cpu_model == ADL
+            || cpu_model == RPL
             || useSKLPath()
             ;
     }
@@ -2281,7 +2539,9 @@ protected:
              SKLL3HitPos = 1,
                L2HitMPos = 2,
             SKLL2MissPos = 2,
-                L2HitPos = 3
+            HSXL2MissPos = 2,
+                L2HitPos = 3,
+             HSXL2RefPos = 3
     };
     uint64 InvariantTSC; // invariant time stamp counter
     uint64 CStateResidency[PCM::MAX_C_STATE + 1];
@@ -2441,15 +2701,15 @@ uint64 getDRAMClocks(uint32 channel, const CounterStateType & before, const Coun
     return clk;
 }
 
-/*! \brief Returns MCDRAM clock ticks
-    \param channel MCDRAM channel number
+/*! \brief Returns HBM clock ticks
+    \param channel HBM channel number
     \param before CPU counter state before the experiment
     \param after CPU counter state after the experiment
 */
 template <class CounterStateType>
-uint64 getMCDRAMClocks(uint32 channel, const CounterStateType & before, const CounterStateType & after)
+uint64 getHBMClocks(uint32 channel, const CounterStateType & before, const CounterStateType & after)
 {
-    return after.MCDRAMClocks[channel] - before.MCDRAMClocks[channel];
+    return after.HBMClocks[channel] - before.HBMClocks[channel];
 }
 
 
@@ -2463,6 +2723,30 @@ template <class CounterStateType>
 uint64 getMCCounter(uint32 channel, uint32 counter, const CounterStateType & before, const CounterStateType & after)
 {
     return after.MCCounter[channel][counter] - before.MCCounter[channel][counter];
+}
+
+/*! \brief Direct read of CXLCM PMU counter (counter meaning depends on the programming: power/performance/etc)
+    \param counter counter number
+    \param port port number
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+*/
+template <class CounterStateType>
+uint64 getCXLCMCounter(uint32 port, uint32 counter, const CounterStateType& before, const CounterStateType& after)
+{
+    return after.CXLCMCounter[port][counter] - before.CXLCMCounter[port][counter];
+}
+
+/*! \brief Direct read of CXLDP PMU counter (counter meaning depends on the programming: power/performance/etc)
+    \param counter counter number
+    \param port port number
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+*/
+template <class CounterStateType>
+uint64 getCXLDPCounter(uint32 port, uint32 counter, const CounterStateType& before, const CounterStateType& after)
+{
+    return after.CXLDPCounter[port][counter] - before.CXLDPCounter[port][counter];
 }
 
 /*! \brief Direct read of M3UPI PMU counter (counter meaning depends on the programming: power/performance/etc)
@@ -2487,6 +2771,18 @@ template <class CounterStateType>
 uint64 getCBOCounter(uint32 cbo, uint32 counter, const CounterStateType& before, const CounterStateType& after)
 {
     return after.CBOCounter[cbo][counter] - before.CBOCounter[cbo][counter];
+}
+
+/*! \brief Direct read of MDF PMU counter (counter meaning depends on the programming: power/performance/etc)
+    \param counter counter number
+    \param mdf mdf number
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+*/
+template <class CounterStateType>
+uint64 getMDFCounter(uint32 mdf, uint32 counter, const CounterStateType& before, const CounterStateType& after)
+{
+    return after.MDFCounter[mdf][counter] - before.MDFCounter[mdf][counter];
 }
 
 /*! \brief Direct read of UBOX PMU counter (counter meaning depends on the programming: power/performance/etc)
@@ -2558,7 +2854,7 @@ uint64 getM2MCounter(uint32 controller, uint32 counter, const CounterStateType &
 template <class CounterStateType>
 uint64 getEDCCounter(uint32 channel, uint32 counter, const CounterStateType & before, const CounterStateType & after)
 {
-    if (PCM::getInstance()->MCDRAMmemoryTrafficMetricsAvailable())
+    if (PCM::getInstance()->HBMmemoryTrafficMetricsAvailable())
         return after.EDCCounter[channel][counter] - before.EDCCounter[channel][counter];
     return 0ULL;
 }
@@ -2804,11 +3100,13 @@ class ServerUncoreCounterState : public UncoreCounterState
 public:
     enum {
         maxControllers = 4,
-        maxChannels = 12,
+        maxChannels = 32,
         maxXPILinks = 6,
         maxCBOs = 128,
+        maxMDFs = 128,
         maxIIOStacks = 16,
-        maxCounters = 4
+        maxCXLPorts = 6,
+        maxCounters = 8
     };
     enum EventPosition
     {
@@ -2827,11 +3125,14 @@ private:
     std::array<std::array<uint64, maxCounters>, maxXPILinks> xPICounter;
     std::array<std::array<uint64, maxCounters>, maxXPILinks> M3UPICounter;
     std::array<std::array<uint64, maxCounters>, maxCBOs> CBOCounter;
+    std::array<std::array<uint64, maxCounters>, maxMDFs> MDFCounter;
     std::array<std::array<uint64, maxCounters>, maxIIOStacks> IIOCounter;
     std::array<std::array<uint64, maxCounters>, maxIIOStacks> IRPCounter;
+    std::array<std::array<uint64, maxCounters>, maxCXLPorts> CXLCMCounter;
+    std::array<std::array<uint64, maxCounters>, maxCXLPorts> CXLDPCounter;
     std::array<uint64, maxCounters> UBOXCounter;
     std::array<uint64, maxChannels> DRAMClocks;
-    std::array<uint64, maxChannels> MCDRAMClocks;
+    std::array<uint64, maxChannels> HBMClocks;
     std::array<std::array<uint64, maxCounters>, maxChannels> MCCounter; // channel X counter
     std::array<std::array<uint64, maxCounters>, maxControllers> M2MCounter; // M2M/iMC boxes x counter
     std::array<std::array<uint64, maxCounters>, maxChannels> EDCCounter; // EDC controller X counter
@@ -2843,13 +3144,19 @@ private:
     template <class CounterStateType>
     friend uint64 getDRAMClocks(uint32 channel, const CounterStateType & before, const CounterStateType & after);
     template <class CounterStateType>
-    friend uint64 getMCDRAMClocks(uint32 channel, const CounterStateType & before, const CounterStateType & after);
+    friend uint64 getHBMClocks(uint32 channel, const CounterStateType & before, const CounterStateType & after);
     template <class CounterStateType>
     friend uint64 getMCCounter(uint32 channel, uint32 counter, const CounterStateType & before, const CounterStateType & after);
+    template <class CounterStateType>
+    friend uint64 getCXLCMCounter(uint32 port, uint32 counter, const CounterStateType& before, const CounterStateType& after);
+    template <class CounterStateType>
+    friend uint64 getCXLDPCounter(uint32 port, uint32 counter, const CounterStateType& before, const CounterStateType& after);
     template <class CounterStateType>
     friend uint64 getM3UPICounter(uint32 port, uint32 counter, const CounterStateType& before, const CounterStateType& after);
     template <class CounterStateType>
     friend uint64 getCBOCounter(uint32 cbo, uint32 counter, const CounterStateType& before, const CounterStateType& after);
+    template <class CounterStateType>
+    friend uint64 getMDFCounter(uint32 mdf, uint32 counter, const CounterStateType& before, const CounterStateType& after);
     template <class CounterStateType>
     friend uint64 getUBOXCounter(uint32 counter, const CounterStateType& before, const CounterStateType& after);
     template <class CounterStateType>
@@ -2882,11 +3189,14 @@ public:
         xPICounter{{}},
         M3UPICounter{{}},
         CBOCounter{{}},
+        MDFCounter{{}},
         IIOCounter{{}},
         IRPCounter{{}},
+        CXLCMCounter{{}},
+        CXLDPCounter{{}},
         UBOXCounter{{}},
         DRAMClocks{{}},
-        MCDRAMClocks{{}},
+        HBMClocks{{}},
         MCCounter{{}},
         M2MCounter{{}},
         EDCCounter{{}},
@@ -2987,11 +3297,13 @@ public:
 class SystemCounterState : public SocketCounterState
 {
     friend class PCM;
+    friend std::vector<uint64> getPCICFGEvent(const PCM::RawEventEncoding& eventEnc, const SystemCounterState& before, const SystemCounterState& after);
 
     std::vector<std::vector<uint64> > incomingQPIPackets; // each 64 byte
     std::vector<std::vector<uint64> > outgoingQPIFlits; // idle or data/non-data flits depending on the architecture
     std::vector<std::vector<uint64> > TxL0Cycles;
     uint64 uncoreTSC;
+    std::unordered_map<PCM::RawEventEncoding, std::vector<uint64> , PCM::PCICFGRegisterEncodingHash, PCM::PCICFGRegisterEncodingCmp> PCICFGValues{};
 
 protected:
     void readAndAggregate(std::shared_ptr<SafeMsrHandle> handle)
@@ -3001,6 +3313,7 @@ protected:
     }
 
 public:
+    std::vector<uint64> CXLWriteMem,CXLWriteCache;
     friend uint64 getIncomingQPILinkBytes(uint32 socketNr, uint32 linkNr, const SystemCounterState & before, const SystemCounterState & after);
     friend uint64 getIncomingQPILinkBytes(uint32 socketNr, uint32 linkNr, const SystemCounterState & now);
     friend double getOutgoingQPILinkUtilization(uint32 socketNr, uint32 linkNr, const SystemCounterState & before, const SystemCounterState & after);
@@ -3011,6 +3324,8 @@ public:
         uncoreTSC(0)
     {
         PCM * m = PCM::getInstance();
+        CXLWriteMem.resize(m->getNumSockets(),0);
+        CXLWriteCache.resize(m->getNumSockets(),0);
         incomingQPIPackets.resize(m->getNumSockets(),
                                   std::vector<uint64>((uint32)m->getQPILinksPerSocket(), 0));
         outgoingQPIFlits.resize(m->getNumSockets(),
@@ -3308,10 +3623,19 @@ double getActiveRelativeFrequency(const CounterStateType & before, const Counter
 template <class CounterStateType>
 double getL2CacheHitRatio(const CounterStateType& before, const CounterStateType& after) // 0.0 - 1.0
 {
-    if (!PCM::getInstance()->isL2CacheHitRatioAvailable()) return 0;
+    auto* pcm = PCM::getInstance();
+    if (!pcm->isL2CacheHitRatioAvailable()) return 0;
     const auto hits = getL2CacheHits(before, after);
+    if (pcm->memoryEventErrata())
+    {
+        const auto all = after.Event[BasicCounterState::HSXL2RefPos] - before.Event[BasicCounterState::HSXL2RefPos];
+        if (all == 0ULL) return 0.;
+        return double(hits) / double(all);
+    }
     const auto misses = getL2CacheMisses(before, after);
-    return double(hits) / double(hits + misses);
+    const auto all = double(hits + misses);
+    if (all == 0.0) return 0.;
+    return double(hits) / all;
 }
 
 /*! \brief Computes L3 cache hit ratio
@@ -3327,7 +3651,9 @@ double getL3CacheHitRatio(const CounterStateType& before, const CounterStateType
     if (!PCM::getInstance()->isL3CacheHitRatioAvailable()) return 0;
     const auto hits = getL3CacheHits(before, after);
     const auto misses = getL3CacheMisses(before, after);
-    return double(hits) / double(hits + misses);
+    const auto all = double(hits + misses);
+    if (all == 0.0) return 0.;
+    return double(hits) / all;
 }
 
 /*! \brief Computes number of L3 cache misses
@@ -3357,12 +3683,16 @@ uint64 getL2CacheMisses(const CounterStateType & before, const CounterStateType 
     auto pcm = PCM::getInstance();
     if (pcm->isL2CacheMissesAvailable() == false) return 0ULL;
     const auto cpu_model = pcm->getCPUModel();
-    if (pcm->useSkylakeEvents() || cpu_model == PCM::SNOWRIDGE || cpu_model == PCM::ADL) {
+    if (pcm->useSkylakeEvents() || cpu_model == PCM::SNOWRIDGE || cpu_model == PCM::ADL || cpu_model == PCM::RPL) {
         return after.Event[BasicCounterState::SKLL2MissPos] - before.Event[BasicCounterState::SKLL2MissPos];
     }
-    if (pcm->isAtom() || cpu_model == PCM::KNL)
+    else if (pcm->isAtom() || cpu_model == PCM::KNL)
     {
         return after.Event[BasicCounterState::ArchLLCMissPos] - before.Event[BasicCounterState::ArchLLCMissPos];
+    }
+    else if (pcm->memoryEventErrata())
+    {
+        return after.Event[BasicCounterState::ArchLLCRefPos] - before.Event[BasicCounterState::ArchLLCRefPos];
     }
     uint64 L3Miss = after.Event[BasicCounterState::L3MissPos] - before.Event[BasicCounterState::L3MissPos];
     uint64 L3UnsharedHit = after.Event[BasicCounterState::L3UnsharedHitPos] - before.Event[BasicCounterState::L3UnsharedHitPos];
@@ -3387,6 +3717,13 @@ uint64 getL2CacheHits(const CounterStateType & before, const CounterStateType & 
         uint64 L2Miss = after.Event[BasicCounterState::ArchLLCMissPos] - before.Event[BasicCounterState::ArchLLCMissPos];
         uint64 L2Ref = after.Event[BasicCounterState::ArchLLCRefPos] - before.Event[BasicCounterState::ArchLLCRefPos];
         return L2Ref - L2Miss;
+    }
+    else if (pcm->memoryEventErrata())
+    {
+        const auto all = after.Event[BasicCounterState::HSXL2RefPos] - before.Event[BasicCounterState::HSXL2RefPos];
+        const auto misses = after.Event[BasicCounterState::HSXL2MissPos] - before.Event[BasicCounterState::HSXL2MissPos];
+        const auto hits = (all > misses) ? (all - misses) : 0ULL;
+        return hits;
     }
     return after.Event[BasicCounterState::L2HitPos] - before.Event[BasicCounterState::L2HitPos];
 }
@@ -3452,7 +3789,7 @@ uint64 getL3CacheHitsSnoop(const CounterStateType & before, const CounterStateTy
     auto pcm = PCM::getInstance();
     if (!pcm->isL3CacheHitsSnoopAvailable()) return 0;
     const auto cpu_model = pcm->getCPUModel();
-    if (cpu_model == PCM::SNOWRIDGE || cpu_model == PCM::ADL)
+    if (cpu_model == PCM::SNOWRIDGE || cpu_model == PCM::ADL || cpu_model == PCM::RPL)
     {
         const int64 misses = getL3CacheMisses(before, after);
         const int64 refs = after.Event[BasicCounterState::ArchLLCRefPos] - before.Event[BasicCounterState::ArchLLCRefPos];
@@ -3476,7 +3813,15 @@ uint64 getL3CacheHitsSnoop(const CounterStateType & before, const CounterStateTy
 template <class CounterStateType>
 uint64 getL3CacheHits(const CounterStateType & before, const CounterStateType & after)
 {
-    if (!PCM::getInstance()->isL3CacheHitsAvailable()) return 0;
+    auto * pcm = PCM::getInstance();
+    assert(pcm);
+    if (!pcm->isL3CacheHitsAvailable()) return 0;
+    else if (pcm->memoryEventErrata())
+    {
+        uint64 LLCMiss = after.Event[BasicCounterState::ArchLLCMissPos] - before.Event[BasicCounterState::ArchLLCMissPos];
+        uint64 LLCRef = after.Event[BasicCounterState::ArchLLCRefPos] - before.Event[BasicCounterState::ArchLLCRefPos];
+        return (LLCRef > LLCMiss) ? (LLCRef - LLCMiss) : 0ULL;
+    }
     return getL3CacheHitsSnoop(before, after) + getL3CacheHitsNoSnoop(before, after);
 }
 
@@ -3633,7 +3978,7 @@ uint64 getBytesWrittenToPMM(const CounterStateType & before, const CounterStateT
     return 0ULL;
 }
 
-/*! \brief Computes number of bytes read from MCDRAM memory controllers
+/*! \brief Computes number of bytes read from HBM memory controllers
 
     \param before CPU counter state before the experiment
     \param after CPU counter state after the experiment
@@ -3642,12 +3987,14 @@ uint64 getBytesWrittenToPMM(const CounterStateType & before, const CounterStateT
 template <class CounterStateType>
 uint64 getBytesReadFromEDC(const CounterStateType & before, const CounterStateType & after)
 {
-    if (PCM::getInstance()->MCDRAMmemoryTrafficMetricsAvailable())
-        return (after.UncEDCNormalReads - before.UncEDCNormalReads) * 64;
+    auto m = PCM::getInstance();
+    assert(m);
+    if (m->HBMmemoryTrafficMetricsAvailable())
+        return (after.UncEDCNormalReads - before.UncEDCNormalReads) * m->getHBMCASTransferSize();
     return 0ULL;
 }
 
-/*! \brief Computes number of bytes written to MCDRAM memory controllers
+/*! \brief Computes number of bytes written to HBM memory controllers
 
     \param before CPU counter state before the experiment
     \param after CPU counter state after the experiment
@@ -3656,8 +4003,10 @@ uint64 getBytesReadFromEDC(const CounterStateType & before, const CounterStateTy
 template <class CounterStateType>
 uint64 getBytesWrittenToEDC(const CounterStateType & before, const CounterStateType & after)
 {
-    if (PCM::getInstance()->MCDRAMmemoryTrafficMetricsAvailable())
-        return (after.UncEDCFullWrites - before.UncEDCFullWrites) * 64;
+    auto m = PCM::getInstance();
+    assert(m);
+    if (m->HBMmemoryTrafficMetricsAvailable())
+        return (after.UncEDCFullWrites - before.UncEDCFullWrites) * m->getHBMCASTransferSize();
     return 0ULL;
 }
 
@@ -3728,6 +4077,32 @@ template <class CounterStateType>
 uint64 getNumberOfCustomEvents(int32 eventCounterNr, const CounterStateType & before, const CounterStateType & after)
 {
     return after.Event[eventCounterNr] - before.Event[eventCounterNr];
+}
+
+
+/*! \brief Computes number of bytes Writen from CXL Cache
+
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+    \return Number of bytes
+*/
+//template <class CounterStateType>
+inline uint64 getCXLWriteCacheBytes(uint32 socket,const SystemCounterState & before,const SystemCounterState & after)
+{
+        return (after.CXLWriteCache[socket] - before.CXLWriteCache[socket]) * 64;
+}
+
+/*! \brief Computes number of bytes Writen from CXL Memory
+
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+    \return Number of bytes
+*/
+//template <class CounterStateType>
+inline uint64 getCXLWriteMemBytes(uint32 socket, const SystemCounterState & before,const SystemCounterState & after)
+{
+
+        return (after.CXLWriteMem[socket] - before.CXLWriteMem[socket]) * 64;
 }
 
 /*! \brief Get estimation of QPI data traffic per incoming QPI link
@@ -3955,6 +4330,7 @@ inline double getQPItoMCTrafficRatio(const SystemCounterState & before, const Sy
     {
         memTraffic += getBytesReadFromPMM(before, after) + getBytesWrittenToPMM(before, after);
     }
+    if (memTraffic == 0) return -1.;
     return double(totalQPI) / double(memTraffic);
 }
 
@@ -4056,6 +4432,34 @@ inline double getRetiring(const CounterStateType & before, const CounterStateTyp
     if (PCM::getInstance()->isHWTMAL1Supported())
         return double(after.RetiringSlots - before.RetiringSlots)/double(getAllSlots(before, after));
     return 0.;
+}
+
+inline std::vector<uint64> getPCICFGEvent(const PCM::RawEventEncoding & eventEnc, const SystemCounterState& before, const SystemCounterState& after)
+{
+    std::vector<uint64> result{};
+    auto beforeIter = before.PCICFGValues.find(eventEnc);
+    auto afterIter = after.PCICFGValues.find(eventEnc);
+    if (beforeIter != before.PCICFGValues.end() &&
+        afterIter != after.PCICFGValues.end())
+    {
+        const auto& beforeValues = beforeIter->second;
+        const auto& afterValues = afterIter->second;
+        assert(beforeValues.size() == afterValues.size());
+        const size_t sz = beforeValues.size();
+        for (size_t i = 0; i < sz; ++i)
+        {
+            switch (eventEnc[PCM::PCICFGEventPosition::type])
+            {
+            case PCM::MSRType::Freerun:
+                result.push_back(afterValues[i] - beforeValues[i]);
+                break;
+            case PCM::MSRType::Static:
+                result.push_back(afterValues[i]);
+                break;
+            }
+        }
+    }
+    return result;
 }
 
 template <class CounterStateType>

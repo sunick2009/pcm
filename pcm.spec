@@ -2,7 +2,7 @@
 Name:            pcm
 Version:         0
 Release:         0
-Summary:         Processor Counter Monitor
+Summary:         Intel(r) Performance Counter Monitor
 Group:           System/Monitoring
 License:         BSD-3-Clause
 Url:             https://github.com/opcm/pcm/archive
@@ -17,7 +17,7 @@ BuildRequires:  cmake
 
 %description
 
-Processor Counter Monitor (PCM) is an application programming interface (API) and a set of tools based on the API to monitor performance and energy metrics of Intel(r) Core(tm), Xeon(r), Atom(tm) and Xeon Phi(tm) processors. PCM works on Linux, Windows, Mac OS X, FreeBSD and DragonFlyBSD operating systems.
+Intel(r) Performance Counter Monitor (Intel(r) PCM) is an application programming interface (API) and a set of tools based on the API to monitor performance and energy metrics of Intel(r) Core(tm), Xeon(r), Atom(tm) and Xeon Phi(tm) processors. PCM works on Linux, Windows, Mac OS X, FreeBSD and DragonFlyBSD operating systems.
 
 %prep
 %setup -n pcm-master
@@ -25,13 +25,13 @@ Processor Counter Monitor (PCM) is an application programming interface (API) an
 %build
 mkdir build
 cd build
-cmake -DCMAKE_INSTALL_PREFIX=$RPM_BUILD_ROOT/ -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+cmake -DCMAKE_INSTALL_PREFIX=/usr/ -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 make -j 
 
 %install
 rm -rf $RPM_BUILD_ROOT
 cd build
-make install
+make install DESTDIR=$RPM_BUILD_ROOT
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -42,21 +42,21 @@ rm -rf $RPM_BUILD_ROOT
 %files
 %defattr(-,root,root,0755)
 %doc LICENSE doc/LINUX_HOWTO.txt
-/usr/share/doc/pcm
+/usr/share/doc/PCM
 /usr/share/licenses/pcm
-/usr/share/doc/pcm/CUSTOM-COMPILE-OPTIONS.md
-/usr/share/doc/pcm/DOCKER_README.md
-/usr/share/doc/pcm/ENVVAR_README.md
-/usr/share/doc/pcm/FAQ.md
-/usr/share/doc/pcm/FREEBSD_HOWTO.txt
-/usr/share/doc/pcm/LINUX_HOWTO.txt
-/usr/share/doc/pcm/MAC_HOWTO.txt
-/usr/share/doc/pcm/PCM-EXPORTER.md
-/usr/share/doc/pcm/PCM-SENSOR-SERVER-README.md
-/usr/share/doc/pcm/PCM_RAW_README.md
-/usr/share/doc/pcm/README.md
-/usr/share/doc/pcm/WINDOWS_HOWTO.md
-/usr/share/doc/pcm/license.txt
+/usr/share/doc/PCM/CUSTOM-COMPILE-OPTIONS.md
+/usr/share/doc/PCM/DOCKER_README.md
+/usr/share/doc/PCM/ENVVAR_README.md
+/usr/share/doc/PCM/FAQ.md
+/usr/share/doc/PCM/FREEBSD_HOWTO.txt
+/usr/share/doc/PCM/LINUX_HOWTO.txt
+/usr/share/doc/PCM/MAC_HOWTO.txt
+/usr/share/doc/PCM/PCM-EXPORTER.md
+/usr/share/doc/PCM/PCM-SENSOR-SERVER-README.md
+/usr/share/doc/PCM/PCM_RAW_README.md
+/usr/share/doc/PCM/README.md
+/usr/share/doc/PCM/WINDOWS_HOWTO.md
+/usr/share/doc/PCM/license.txt
 /usr/share/licenses/pcm/LICENSE
 %{_sbindir}/pcm-core
 %{_sbindir}/pcm-iio
@@ -67,6 +67,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_sbindir}/pcm-mmio
 %{_sbindir}/pcm-numa
 %{_sbindir}/pcm-pcicfg
+%{_sbindir}/pcm-accel
 %{_sbindir}/pcm-pcie
 %{_sbindir}/pcm-power
 %{_sbindir}/pcm-sensor

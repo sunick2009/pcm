@@ -1,34 +1,5 @@
-/*
-BSD 3-Clause License
-
-Copyright (c) 2016-2020, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this
-  list of conditions and the following disclaimer.
-
-* Redistributions in binary form must reproduce the above copyright notice,
-  this list of conditions and the following disclaimer in the documentation
-  and/or other materials provided with the distribution.
-
-* Neither the name of the copyright holder nor the names of its
-  contributors may be used to endorse or promote products derived from
-  this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2016-2022, Intel Corporation
 
 // Use port allocated for PCM in prometheus:
 // https://github.com/prometheus/prometheus/wiki/Default-port-allocations
@@ -193,6 +164,8 @@ std::ostream& operator<<( std::ostream& os, date const & d ) {
     return os;
 }
 
+/* Not used right now
+
 std::string read_ndctl_info( std::ofstream& logfile ) {
     int pipes[2];
     if ( pipe( pipes ) == -1 ) {
@@ -225,6 +198,8 @@ std::string read_ndctl_info( std::ofstream& logfile ) {
     return ndctl.str();
 }
 
+*/
+
 class HTTPServer;
 
 class SignalHandler {
@@ -246,6 +221,7 @@ public:
 
     void ignoreSignal( int signum ) {
         struct sigaction sa;
+	sigemptyset(&sa.sa_mask);
         sa.sa_handler = SIG_IGN;
         sa.sa_flags = 0;
         sigaction( signum, &sa, 0 );
@@ -253,6 +229,7 @@ public:
 
     void installHandler( void (*handler)(int), int signum ) {
         struct sigaction sa;
+	sigemptyset(&sa.sa_mask);
         sa.sa_handler = handler;
         sa.sa_flags = 0;
         sigaction( signum, &sa, 0 );
@@ -462,6 +439,9 @@ private:
         uint32 links   = pcm->getQPILinksPerSocket();
         for ( uint32 i=0; i < sockets; ++i ) {
             startObject( std::string( "QPI Counters Socket " ) + std::to_string( i ), BEGIN_OBJECT );
+            printCounter( std::string( "CXL Write Cache" ), getCXLWriteCacheBytes   (i,  before, after ) );
+            printCounter( std::string( "CXL Write Mem"   ), getCXLWriteMemBytes     (i,  before, after ) );
+
             for ( uint32 j=0; j < links; ++j ) {
                 printCounter( std::string( "Incoming Data Traffic On Link " ) + std::to_string( j ), getIncomingQPILinkBytes      ( i, j, before, after ) );
                 printCounter( std::string( "Outgoing Data And Non-Data Traffic On Link " ) + std::to_string( j ), getOutgoingQPILinkBytes      ( i, j, before, after ) );
@@ -713,6 +693,8 @@ private:
         uint32 links   = pcm->getQPILinksPerSocket();
         for ( uint32 i=0; i < sockets; ++i ) {
             addToHierarchy( std::string( "socket=\"" ) + std::to_string( i ) + "\"" );
+            printCounter( std::string( "CXL Write Cache" ), getCXLWriteCacheBytes   (i,  before, after ) );
+            printCounter( std::string( "CXL Write Mem"   ), getCXLWriteMemBytes     (i,  before, after ) );
             for ( uint32 j=0; j < links; ++j ) {
                 printCounter( std::string( "Incoming Data Traffic On Link " ) + std::to_string( j ),                          getIncomingQPILinkBytes      ( i, j, before, after ) );
                 printCounter( std::string( "Outgoing Data And Non-Data Traffic On Link " ) + std::to_string( j ),             getOutgoingQPILinkBytes      ( i, j, before, after ) );
@@ -822,13 +804,23 @@ public:
 
     void setSocket( int socketFD ) {
         socketFD_ = socketFD;
+        if( 0 == socketFD )  // avoid work with 0 socket after closure socket and set value to 0
+            return;
         // When receiving the socket descriptor, set the timeout
-        setsockopt( socketFD_, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_, sizeof(struct timeval) );
+        const auto res = setsockopt( socketFD_, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_, sizeof(struct timeval) );
+        if (res != 0)
+        {
+            std::cerr << "setsockopt failed while setting timeout value, " << strerror( errno ) << "\n";
+        }
     }
 
     void setTimeout( struct timeval t ) {
         timeout_ = t;
-        setsockopt( socketFD_, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_, sizeof(struct timeval) );
+        const auto res = setsockopt( socketFD_, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_, sizeof(struct timeval) );
+        if (res != 0)
+        {
+            std::cerr << "setsockopt failed while setting timeout value, " << strerror( errno ) << "\n";
+        }
     }
 
 #if defined (USE_SSL)
@@ -892,6 +884,8 @@ protected:
     }
 
     int sync() override {
+        if ( 0 == socketFD_ )  // Socket is closed already
+            return 0;
         int_type ret = writeToSocket();
         if ( traits_type::eof() == ret )
             return -1;
@@ -993,7 +987,13 @@ public:
 #else
     basic_socketstream( int socketFD ) : stream_type( &socketBuffer_ ) {
 #endif
+        DBG( 3,"socketFD = ", socketFD );
+        if ( 0 == socketFD ) {
+            DBG( 3,"Trying to set socketFD to 0 which is not allowed!" );
+            throw std::runtime_error( "Trying to set socketFD to 0 on basic_socketstream level which is not allowed." );
+        }
         socketBuffer_.setSocket( socketFD );
+
 #if defined (USE_SSL)
         if ( nullptr != ssl )
             socketBuffer_.setSSL( ssl );
@@ -1068,7 +1068,7 @@ public:
 
     void close() {
         const auto s = socketBuffer_.socket();
-        if (s != -1) ::close(s);
+        if ( 0 != s ) ::close(s);
         socketBuffer_.setSocket( 0 );
     }
 
@@ -1558,7 +1558,7 @@ public:
         } else {
             // If first character is not a / then the first colon is end of scheme
             size_t schemeColonPos = fullURL.find( ':' );
-            if ( std::string::npos != schemeColonPos ) {
+            if ( std::string::npos != schemeColonPos && 0 != schemeColonPos ) {
                 std::string scheme;
                 scheme = fullURL.substr( 0, schemeColonPos );
                 std::string validSchemeChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-.";
@@ -1607,11 +1607,16 @@ public:
                     DBG( 3, "3 userEndPos '", userEndPos, "'" );
                     std::string user = authority.substr( 0, userEndPos );
                     DBG( 3, "user: '", user, "'" );
-                    // user is possibly percent encoded FIXME
-                    url.user_ = url.percentDecode( user );
-                    url.hasUser_ = true;
-                    // delete user/pass including the at
-                    authority.erase( 0, atPos+1 );
+                    if ( !user.empty() ) {
+                        // user is possibly percent encoded FIXME
+                        url.user_ = url.percentDecode( user );
+                        url.hasUser_ = true;
+                        // delete user/pass including the at
+                        authority.erase( 0, atPos+1 );
+                    }
+                    else {
+                        throw std::runtime_error( "User not found before @ sign" );
+                    }
                 }
 
                 // Instead of all the logic it is easier to work on substrings
@@ -1675,37 +1680,50 @@ public:
                     }
                 } else if ( !url.hasHost_ )
                     throw std::runtime_error( "No hostname found" );
+            } else {
+                throw std::runtime_error( "// not found" );
             }
         }
 
         pathEndPos = std::min( {questionMarkPos, numberPos} );
-        url.path_ = fullURL.substr( pathBeginPos, pathEndPos - pathBeginPos );
+        if ( std::string::npos != pathBeginPos ) {
+            url.path_ = fullURL.substr( pathBeginPos, pathEndPos - pathBeginPos );
+        } else {
+            url.path_ = "";
+        }
         DBG( 3, "path: '", url.path_, "'" );
 
         if ( std::string::npos != questionMarkPos ) {
-            url.hasQuery_ = true;
-	    // Why am i not checking numberPos for validity?
+            // Why am i not checking numberPos for validity?
             std::string queryString = fullURL.substr( questionMarkPos+1, numberPos-(questionMarkPos+1) );
             DBG( 3, "queryString: '", queryString, "'" );
-            size_t ampPos = 0;
-            while ( !queryString.empty() ) {
-                ampPos = queryString.find( '&' );
-                std::string query = queryString.substr( 0, ampPos );
-                DBG( 3, "query: '", query, "'" );
-                size_t equalsPos = query.find( '=' );
-                if ( std::string::npos == equalsPos )
-                    throw std::runtime_error( "Did not find a '=' in the query" );
-                std::string one, two;
-                one = url.percentDecode( query.substr( 0, equalsPos ) );
-                DBG( 3, "one: '", one, "'" );
-                two = url.percentDecode( query.substr( equalsPos+1 ) );
-                DBG( 3, "two: '", two, "'" );
-                url.arguments_.push_back( std::make_pair( one ,two ) );
-                // npos + 1 == 0... ouch
-                if ( std::string::npos == ampPos )
-                    queryString.erase( 0, ampPos );
-                else
-                    queryString.erase( 0, ampPos+1 );
+
+            if ( queryString.empty() ) {
+                url.hasQuery_ = false;
+                throw std::runtime_error( "Invalid URL: query not found after question mark" );
+            }
+            else {
+                url.hasQuery_ = true;
+                size_t ampPos = 0;
+                while ( !queryString.empty() ) {
+                    ampPos = queryString.find( '&' );
+                    std::string query = queryString.substr( 0, ampPos );
+                    DBG( 3, "query: '", query, "'" );
+                    size_t equalsPos = query.find( '=' );
+                    if ( std::string::npos == equalsPos )
+                        throw std::runtime_error( "Did not find a '=' in the query" );
+                    std::string one, two;
+                    one = url.percentDecode( query.substr( 0, equalsPos ) );
+                    DBG( 3, "one: '", one, "'" );
+                    two = url.percentDecode( query.substr( equalsPos+1 ) );
+                    DBG( 3, "two: '", two, "'" );
+                    url.arguments_.push_back( std::make_pair( one ,two ) );
+                    // npos + 1 == 0... ouch
+                    if ( std::string::npos == ampPos )
+                        queryString.erase( 0, ampPos );
+                    else
+                        queryString.erase( 0, ampPos+1 );
+                }
             }
         }
 
@@ -1873,7 +1891,7 @@ public:
         return hh;
     }
 
-    std::string headerName() { return name_; }
+    std::string headerName() const { return name_; }
     // Not sure what I needed it for but leaving it for now
 //     std::string headerValue() const {
 //         std::cout << "Calling headerValue for HeaderName: " << name_ << "\n";
@@ -1966,7 +1984,7 @@ private:
 private:
     std::string name_;
     std::string value_;
-    enum HeaderType type_;
+    enum HeaderType type_{HeaderType::Invalid};
     std::vector<std::string> valueList_;
     std::vector<double> floats_;
     std::vector<long long> integers_;
@@ -1998,7 +2016,7 @@ public:
         }
     }
 
-    void addHeader( HTTPHeader hh ) {
+    void addHeader( const HTTPHeader & hh ) {
         if ( headers_.insert( std::make_pair( hh.headerName(), hh ) ).second == false ) {
             throw std::runtime_error( "Header already exists in the headerlist" );
         }
@@ -2250,13 +2268,14 @@ private:
     };
 };
 
+// Compress linear white space and remove carriage return, not new line, this one is gone already
 std::string& compressLWSAndRemoveCR( std::string& line ) {
     std::string::size_type pos = 0, end = line.size(), start = 0;
 
     for ( pos = 0; pos < end; ++pos ) {
         start = pos;
         if ( ::isspace( line[pos] ) ) {
-            while ( pos < line.size() && ::isspace( line[++pos] ) ) {
+            while ( (pos+1) < line.size() && ::isspace( line[++pos] ) ) {
             }
             if ( (pos - start) > 1 ) {
                 line.erase( start+1,  pos-start-1 );
@@ -3105,28 +3124,37 @@ int startHTTPSServer( unsigned short port, std::string const & cFile, std::strin
 #endif
 
 void printHelpText( std::string const & programName ) {
-    std::cerr << "Usage: " << programName << " [OPTION]\n\n";
-    std::cerr << "Valid Options:\n";
-    std::cerr << "    -d                   : Run in the background\n";
+    std::cout << "Usage: " << programName << " [OPTION]\n\n";
+    std::cout << "Valid Options:\n";
+    std::cout << "    -d                   : Run in the background\n";
 #if defined (USE_SSL)
-    std::cerr << "    -s                   : Use https protocol (default port " << DEFAULT_HTTPS_PORT << ")\n";
+    std::cout << "    -s                   : Use https protocol (default port " << DEFAULT_HTTPS_PORT << ")\n";
 #endif
-    std::cerr << "    -p portnumber        : Run on port <portnumber> (default port is " << DEFAULT_HTTP_PORT << ")\n";
-    std::cerr << "    -r|--reset           : Reset programming of the performance counters.\n";
-    std::cerr << "    -D|--debug level     : level = 0: no debug info, > 0 increase verbosity.\n";
-    std::cerr << "    -R|--real-time       : If possible the daemon will run with real time\n";
-    std::cerr << "                           priority, could be useful under heavy load to \n";
-    std::cerr << "                           stabilize the async counter fetching.\n";
+    std::cout << "    -p portnumber        : Run on port <portnumber> (default port is " << DEFAULT_HTTP_PORT << ")\n";
+    std::cout << "    -r|--reset           : Reset programming of the performance counters.\n";
+    std::cout << "    -D|--debug level     : level = 0: no debug info, > 0 increase verbosity.\n";
+    std::cout << "    -R|--real-time       : If possible the daemon will run with real time\n";
+    std::cout << "                           priority, could be useful under heavy load to \n";
+    std::cout << "                           stabilize the async counter fetching.\n";
 #if defined (USE_SSL)
-    std::cerr << "    -C|--certificateFile : \n";
-    std::cerr << "    -P|--privateKeyFile  : \n";
+    std::cout << "    -C|--certificateFile : \n";
+    std::cout << "    -P|--privateKeyFile  : \n";
 #endif
-    std::cerr << "    -h|--help            : This information\n";
+    std::cout << "    -h|--help            : This information\n";
+    std::cout << "    -silent              : Silence information output and print only measurements\n";
+    std::cout << "    --version            : Print application version\n";
+    print_help_force_rtm_abort_mode(25, ":");
 }
 
 #if not defined( UNIT_TEST )
 /* Main */
-int main( int argc, char* argv[] ) {
+PCM_MAIN_NOTHROW;
+
+int mainThrows(int argc, char * argv[]) {
+
+    if(print_version(argc, argv))
+        exit(EXIT_SUCCESS);
+
     // Argument handling
     bool daemonMode = false;
 #if defined (USE_SSL)
@@ -3134,16 +3162,22 @@ int main( int argc, char* argv[] ) {
 #endif
     bool forcedProgramming = false;
     bool useRealtimePriority = false;
+    bool forceRTMAbortMode = false;
     unsigned short port = 0;
     unsigned short debug_level = 0;
     std::string certificateFile;
     std::string privateKeyFile;
 
+    null_stream nullStream;
+    check_and_set_silent(argc, argv, nullStream);
+
     if ( argc > 1 ) {
+        std::string arg_value;
+
         for ( int i=1; i < argc; ++i ) {
-            if ( 0 == strncmp( argv[i], "-d", 2 ) )
+            if ( check_argument_equals( argv[i], {"-d"} ) )
                 daemonMode = true;
-            else if ( 0 == strncmp( argv[i], "-p", 2 ) )
+            else if ( check_argument_equals( argv[i], {"-p"} ) )
             {
                 if ( (++i) < argc ) {
                     std::stringstream ss( argv[i] );
@@ -3158,16 +3192,16 @@ int main( int argc, char* argv[] ) {
                 }
             }
 #if defined (USE_SSL)
-            else if ( 0 == strncmp( argv[i], "-s" , 2 ) )
+            else if ( check_argument_equals( argv[i], {"-s"} ) )
             {
                 useSSL = true;
             }
 #endif
-            else if ( 0 == strncmp( argv[i], "-r", 2 ) || 0 == strncmp( argv[i], "--reset", 7 ) )
+            else if ( check_argument_equals( argv[i], {"-r", "--reset"} ) )
             {
                 forcedProgramming = true;
             }
-            else if ( 0 == strncmp( argv[i], "-D", 2 ) || 0 == strncmp( argv[i], "--debug", 7 ) )
+            else if ( check_argument_equals( argv[i], {"-D", "--debug"} ) )
             {
                 if ( (++i) < argc ) {
                     std::stringstream ss( argv[i] );
@@ -3181,17 +3215,27 @@ int main( int argc, char* argv[] ) {
                     throw std::runtime_error( "main: Error no debug level argument given" );
                 }
             }
-            else if ( 0 == strncmp( argv[i], "-R", 2 ) || 0 == strncmp( argv[i], "--real-time", 11 ) )
+            else if ( check_argument_equals( argv[i], {"-R", "--real-time"} ) )
             {
                 useRealtimePriority = true;
             }
-            else if ( 0 == strncmp( argv[i], "-h", 2 ) || 0 == strncmp( argv[i], "--help", 6 ) )
+            else if ( check_argument_equals( argv[i], {"--help", "-h", "/h"} ) )
             {
                 printHelpText( argv[0] );
                 exit(0);
             }
+            else if (check_argument_equals( argv[i], { "-force-rtm-abort-mode" }))
+            {
+                forceRTMAbortMode = true;
+            }
+            else if ( check_argument_equals( argv[i], {"-silent", "/silent"} ) )
+            {
+                // handled in check_and_set_silent
+                continue;
+            }
 #if defined (USE_SSL)
-            else if ( 0 == strncmp( "-C", argv[i], 2 ) || 0 == strncmp( "--certificateFile", argv[i], 17 ) ) {
+            else if ( check_argument_equals( argv[i], {"-C", "--certificateFile"} ) ) {
+
                 if ( (++i) < argc ) {
                     std::ifstream fp( argv[i] );
                     if ( ! fp.is_open() ) {
@@ -3206,7 +3250,8 @@ int main( int argc, char* argv[] ) {
                     exit( 3 );
                 }
             }
-            else if ( 0 == strncmp( "-P", argv[i], 2 ) || 0 == strncmp( "--privateKeyFile", argv[i], 16 ) ) {
+            else if ( check_argument_equals( argv[i], {"-P", "--privateKeyFile"} ) ) {
+
                 if ( (++i) < argc ) {
                     std::ifstream fp( argv[i] );
                     if ( ! fp.is_open() ) {
@@ -3270,8 +3315,14 @@ int main( int argc, char* argv[] ) {
         // A HTTP interface to change the programming is planned
         PCM::ErrorCode status;
         PCM * pcmInstance = PCM::getInstance();
+        assert(pcmInstance);
+        if (forceRTMAbortMode)
+        {
+            pcmInstance->enableForceRTMAbortMode();
+        }
         do {
             status = pcmInstance->program();
+
             switch ( status ) {
                 case PCM::PMUBusy:
                 {
@@ -3302,6 +3353,9 @@ int main( int argc, char* argv[] ) {
         } else {
             DBG( 1, "Programmed Partial Writes instead of PMEM R/W BW" );
         }
+
+        //TODO: check return value when its implemented  
+        pcmInstance->programCXLCM();
 
 #if defined (USE_SSL)
         if ( useSSL ) {

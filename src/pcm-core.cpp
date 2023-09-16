@@ -1,15 +1,5 @@
-/*
-   Copyright (c) 2009-2018, Intel Corporation
-   All rights reserved.
-
-   Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
- * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
- * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2009-2022, Intel Corporation
 // written by Patrick Lu
 
 
@@ -120,28 +110,30 @@ extern "C" {
 	}
 }
 
-void print_usage(const string progname)
+void print_usage(const string & progname)
 {
-	cerr << "\n Usage: \n " << progname
-		<< " --help | [delay] [options] [-- external_program [external_program_options]]\n";
-	cerr << "   <delay>                               => time interval to sample performance counters.\n";
-	cerr << "                                            If not specified, or 0, with external program given\n";
-	cerr << "                                            will read counters only after external program finishes\n";
-	cerr << " Supported <options> are: \n";
-	cerr << "  -h    | --help      | /h               => print this help and exit\n";
-	cerr << "  -c    | /c                             => print CPU Model name and exit (used for pmu-query.py)\n";
-	cerr << "  -csv[=file.csv]     | /csv[=file.csv]  => output compact CSV format to screen or\n"
+	cout << "\n Usage: \n " << progname
+		 << " --help | [delay] [options] [-- external_program [external_program_options]]\n";
+	cout << "   <delay>                               => time interval to sample performance counters.\n";
+	cout << "                                            If not specified, or 0, with external program given\n";
+	cout << "                                            will read counters only after external program finishes\n";
+	cout << " Supported <options> are: \n";
+	cout << "  -h    | --help      | /h               => print this help and exit\n";
+	cout << "  -silent                                => silence information output and print only measurements\n";
+	cout << "  --version                              => print application version\n";
+	cout << "  -c    | /c                             => print CPU Model name and exit (used for pmu-query.py)\n";
+	cout << "  -csv[=file.csv]     | /csv[=file.csv]  => output compact CSV format to screen or\n"
 		<< "                                            to a file, in case filename is provided\n";
-    cerr << "  [-e event1] [-e event2] [-e event3] .. => optional list of custom events to monitor\n";
-	cerr << "  event description example: cpu/umask=0x01,event=0x05,name=MISALIGN_MEM_REF.LOADS/ \n";
-	cerr << "  -yc   | --yescores  | /yc              => enable specific cores to output\n";
-	cerr << "  -i[=number] | /i[=number]              => allow to determine number of iterations\n";
+    cout << "  [-e event1] [-e event2] [-e event3] .. => optional list of custom events to monitor\n";
+	cout << "  event description example: cpu/umask=0x01,event=0x05,name=MISALIGN_MEM_REF.LOADS/ \n";
+	cout << "  -yc   | --yescores  | /yc              => enable specific cores to output\n";
+	cout << "  -i[=number] | /i[=number]              => allow to determine number of iterations\n";
     print_help_force_rtm_abort_mode(41);
-	cerr << " Examples:\n";
-	cerr << "  " << progname << " 1                   => print counters every second without core and socket output\n";
-	cerr << "  " << progname << " 0.5 -csv=test.log   => twice a second save counter values to test.log in CSV format\n";
-	cerr << "  " << progname << " /csv 5 2>/dev/null  => one sampe every 5 seconds, and discard all diagnostic output\n";
-	cerr << "\n";
+	cout << " Examples:\n";
+	cout << "  " << progname << " 1                   => print counters every second without core and socket output\n";
+	cout << "  " << progname << " 0.5 -csv=test.log   => twice a second save counter values to test.log in CSV format\n";
+	cout << "  " << progname << " /csv 5 2>/dev/null  => one sample every 5 seconds, and discard all diagnostic output\n";
+	cout << "\n";
 }
 
 	template <class StateType>
@@ -254,7 +246,10 @@ void build_event(const char * argv, EventSelectRegister *reg, int idx)
 				}
 				events[idx].msr_value = tmp2;
 			}
-			else if(pcm_sscanf(subtoken) >> s_expect("name=") >> setw(255) >> events[idx].name) ;
+			else if(pcm_sscanf(subtoken) >> s_expect("name=") >> setw(255) >> events[idx].name) {
+				if (check_for_injections(events[idx].name))
+					throw events[idx].name;
+			}
 			else
 			{
 				cerr << "Event '" << subtoken << "' is not supported. See the list of supported events\n";
@@ -266,18 +261,26 @@ void build_event(const char * argv, EventSelectRegister *reg, int idx)
 	events[idx].value = reg->value;
 }
 
-int main(int argc, char * argv[])
-{
-	set_signal_handlers();
+PCM_MAIN_NOTHROW;
 
+int mainThrows(int argc, char * argv[])
+{
+	if(print_version(argc, argv))
+		exit(EXIT_SUCCESS);
+
+	null_stream nullStream2;
 #ifdef PCM_FORCE_SILENT
-	null_stream nullStream1, nullStream2;
+	null_stream nullStream1;
 	std::cout.rdbuf(&nullStream1);
 	std::cerr.rdbuf(&nullStream2);
+#else
+	check_and_set_silent(argc, argv, nullStream2);
 #endif
 
+	set_signal_handlers();
+
 	cerr << "\n";
-	cerr << " Processor Counter Monitor: Core Monitoring Utility \n";
+	cerr << " Intel(r) Performance Counter Monitor: Core Monitoring Utility \n";
 	cerr << "\n";
 
 	double delay = -1.0;
@@ -304,40 +307,40 @@ int main(int argc, char * argv[])
 	{
 		argv++;
 		argc--;
-		if (strncmp(*argv, "--help", 6) == 0 ||
-				strncmp(*argv, "-h", 2) == 0 ||
-				strncmp(*argv, "/h", 2) == 0)
+		string arg_value;
+
+		if (check_argument_equals(*argv, {"--help", "-h", "/h"}))
 		{
 			print_usage(program);
 			exit(EXIT_FAILURE);
 		}
-		else if (strncmp(*argv, "-csv",4) == 0 ||
-				strncmp(*argv, "/csv",4) == 0)
+		else if (check_argument_equals(*argv, {"-silent", "/silent"}))
+		{
+			// handled in check_and_set_silent
+			continue;
+		}
+		else if (check_argument_equals(*argv, {"-csv", "/csv"}))
 		{
 			csv = true;
-			string cmd = string(*argv);
-			size_t found = cmd.find('=',4);
-			if (found != string::npos) {
-				string filename = cmd.substr(found+1);
-				if (!filename.empty()) {
-					m->setOutput(filename);
-				}
+		}
+		else if (extract_argument_value(*argv, {"-csv", "/csv"}, arg_value))
+		{
+			csv = true;
+			if (!arg_value.empty()) {
+				m->setOutput(arg_value);
 			}
 			continue;
 		}
-		else
-		if (mainLoop.parseArg(*argv))
+		else if (mainLoop.parseArg(*argv))
 		{
 			continue;
 		}
-		else if (strncmp(*argv, "-c",2) == 0 ||
-				strncmp(*argv, "/c",2) == 0)
+		else if (check_argument_equals(*argv, {"-c", "/c"}))
 		{
 			cout << m->getCPUFamilyModelString() << "\n";
 			exit(EXIT_SUCCESS);
 		}
-		else if (strncmp(*argv, "-txn",4) == 0 ||
-				strncmp(*argv, "/txn",4) == 0)
+		else if (check_argument_equals(*argv, {"-txn", "/txn"}))
 		{
 			argv++;
 			argc--;
@@ -345,9 +348,7 @@ int main(int argc, char * argv[])
 			cout << "txn_rate set to " << txn_rate << "\n";
 			continue;
 		}
-		if (strncmp(*argv, "--yescores", 10) == 0 ||
-				strncmp(*argv, "-yc", 3) == 0 ||
-				strncmp(*argv, "/yc", 3) == 0)
+		else if (check_argument_equals(*argv, {"--yescores", "-yc", "/yc"}))
 		{
 			argv++;
 			argc--;
@@ -382,10 +383,11 @@ int main(int argc, char * argv[])
 			}
 			continue;
 		}
-		else if (strncmp(*argv, "-e",2) == 0)
+		else if (check_argument_equals(*argv, {"-e"}))
 		{
 			argv++;
 			argc--;
+
 			if(cur_event >= conf.nGPCounters) {
 				cerr << "At most " << conf.nGPCounters << " events are allowed\n";
 				exit(EXIT_FAILURE);
@@ -396,15 +398,13 @@ int main(int argc, char * argv[])
 			} catch (...) {
 				exit(EXIT_FAILURE);
 			}
-
 			continue;
 		}
-        else
-        if (CheckAndForceRTMAbortMode(*argv, m))
-        {
-            continue;
-        }
-		else if (strncmp(*argv, "--", 2) == 0)
+		else if (CheckAndForceRTMAbortMode(*argv, m))
+		{
+			continue;
+		}
+		else if (check_argument_equals(*argv, {"--"}))
 		{
 			argv++;
 			sysCmd = *argv;
@@ -413,18 +413,7 @@ int main(int argc, char * argv[])
 		}
 		else
 		{
-			// any other options positional that is a floating point number is treated as <delay>,
-			// while the other options are ignored with a warning issues to stderr
-			double delay_input = 0.0;
-			std::istringstream is_str_stream(*argv);
-			is_str_stream >> noskipws >> delay_input;
-			if(is_str_stream.eof() && !is_str_stream.fail()) {
-				delay = delay_input;
-			} else {
-				cerr << "WARNING: unknown command-line option: \"" << *argv << "\". Ignoring it.\n";
-				print_usage(program);
-				exit(EXIT_FAILURE);
-			}
+			delay = parse_delay(*argv, program, (print_usage_func)print_usage);
 			continue;
 		}
 	} while(argc > 1); // end of command line parsing loop

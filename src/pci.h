@@ -1,15 +1,5 @@
-/*
-Copyright (c) 2009-2018, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2009-2022, Intel Corporation
 // written by Roman Dementiev
 //            Pat Fay
 //            Jim Harris (FreeBSD)
@@ -136,8 +126,9 @@ class PciHandleMM
     static void readMCFG();
 #endif
 
-    PciHandleMM();             // forbidden
-    PciHandleMM(PciHandleM &); // forbidden
+    PciHandleMM() = delete;             // forbidden
+    PciHandleMM(const PciHandleMM &) = delete; // forbidden
+    PciHandleMM & operator = (const PciHandleMM &) = delete;
 
 public:
     PciHandleMM(uint32 groupnr_, uint32 bus_, uint32 device_, uint32 function_);
@@ -165,6 +156,82 @@ public:
 #endif //  _MSC_VER
 
 #endif
+
+inline void getMCFGRecords(std::vector<MCFGRecord> & mcfg)
+{
+    #ifdef __linux__
+    mcfg = PciHandleMM::getMCFGRecords();
+    #else
+    MCFGRecord segment;
+    segment.PCISegmentGroupNumber = 0;
+    segment.startBusNumber = 0;
+    segment.endBusNumber = 0xff;
+    mcfg.push_back(segment);
+    #endif
+}
+
+template <class F>
+inline void forAllIntelDevices(F f, int requestedDevice = -1, int requestedFunction = -1)
+{
+    std::vector<MCFGRecord> mcfg;
+    getMCFGRecords(mcfg);
+
+    auto probe = [&f](const uint32 group, const uint32 bus, const uint32 device, const uint32 function)
+    {
+        uint32 value = 0;
+        try
+        {
+            PciHandleType h(group, bus, device, function);
+            h.read32(0, &value);
+
+        } catch(...)
+        {
+            // invalid bus:devicei:function
+            return;
+        }
+        const uint32 vendor_id = value & 0xffff;
+        const uint32 device_id = (value >> 16) & 0xffff;
+        if (vendor_id != PCM_INTEL_PCI_VENDOR_ID)
+        {
+            return;
+        }
+
+        f(group, bus, device, function, device_id);
+    };
+
+    for (uint32 s = 0; s < (uint32)mcfg.size(); ++s)
+    {
+        const auto group = mcfg[s].PCISegmentGroupNumber;
+        for (uint32 bus = (uint32)mcfg[s].startBusNumber; bus <= (uint32)mcfg[s].endBusNumber; ++bus)
+        {
+            auto forAllFunctions = [requestedFunction,&probe](const uint32 group, const uint32 bus, const uint32 device)
+            {
+                if (requestedFunction < 0)
+                {
+                    for (uint32 function = 0 ; function < 8; ++function)
+                    {
+                        probe(group, bus, device, function);
+                    }
+                }
+                else
+                {
+                    probe(group, bus, device, requestedFunction);
+                }
+            };
+            if (requestedDevice < 0)
+            {
+                for (uint32 device = 0 ; device < 32; ++device)
+                {
+                    forAllFunctions(group, bus, device);
+                }
+            }
+            else
+            {
+                forAllFunctions(group, bus, requestedDevice);
+            }
+        }
+    }
+}
 
 } // namespace pcm
 

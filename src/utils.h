@@ -1,19 +1,5 @@
-/*
-Copyright (c) 2009-2020, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the dis
-tribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNES
-S FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDI
-NG, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRI
-CT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2009-2022, Intel Corporation
 // written by Roman Dementiev
 
 
@@ -40,8 +26,44 @@ CT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 #else
 #include <intrin.h>
 #endif
+#include <map>
+#include <unordered_map>
+
+#define PCM_MAIN_NOTHROW \
+int mainThrows(int argc, char * argv[]); \
+int main(int argc, char * argv[]) \
+{ \
+    try { \
+        return mainThrows(argc, argv); \
+    } catch(const std::runtime_error & e) \
+    { \
+        std::cerr << "PCM ERROR. Exception " << e.what() << "\n"; \
+    } catch(const std::exception & e) \
+    { \
+        std::cerr << "PCM ERROR. Exception " << e.what() << "\n"; \
+    } catch (...) \
+    { \
+        std::cerr << "PCM ERROR. Exception detected (no further details available).\n"; \
+    } \
+    return -1; \
+}
 
 namespace pcm {
+
+#ifdef _MSC_VER
+    using tstring = std::basic_string<TCHAR>;
+#ifdef UNICODE
+    static auto& tcerr = std::wcerr;
+#else
+    static auto& tcerr = std::cerr;
+#endif
+#endif // _MSC_VER
+
+typedef void (* print_usage_func)(const std::string & progname);
+double parse_delay(const char * arg, const std::string & progname, print_usage_func print_usage_func);
+bool extract_argument_value(const char * arg, std::initializer_list<const char*> arg_names, std::string & value);
+bool check_argument_equals(const char * arg, std::initializer_list<const char*> arg_names);
+bool check_for_injections(const std::string & str);
 
 void exit_cleanup(void);
 void set_signal_handlers(void);
@@ -94,7 +116,7 @@ void MySystem(char * sysCmd, char ** argc);
 #endif
 struct null_stream : public std::streambuf
 {
-    void overflow(char) { }
+    int_type overflow(int_type) override { return {}; }
 };
 #ifdef __GCC__
 #pragma GCC diagnostic pop
@@ -239,7 +261,8 @@ enum CsvOutputType
     Header1,
     Header2,
     Data,
-    Header21 // merged headers 2 and 1
+    Header21, // merged headers 2 and 1
+    Json
 };
 
 template <class H1, class H2, class D>
@@ -255,6 +278,7 @@ inline void choose(const CsvOutputType outputType, H1 h1Func, H2 h2Func, D dataF
         h2Func();
         break;
     case Data:
+    case Json:
         dataFunc();
         break;
     default:
@@ -289,12 +313,32 @@ inline void printDateForCSV(const CsvOutputType outputType, std::string separato
         });
 }
 
+inline void printDateForJson(const std::string& separator, const std::string &jsonSeparator)
+{
+    std::pair<tm, uint64> tt{ pcm_localtime() };
+    std::cout.precision(3);
+    char old_fill = std::cout.fill('0');
+    std::cout <<
+        "Date" << jsonSeparator << "\"" <<
+        std::setw(4) <<  1900 + tt.first.tm_year << '-' <<
+        std::setw(2) << 1 + tt.first.tm_mon << '-' <<
+        std::setw(2) << tt.first.tm_mday << "\"" << separator <<
+        "Time" << jsonSeparator << "\"" <<
+        std::setw(2) << tt.first.tm_hour << ':' <<
+        std::setw(2) << tt.first.tm_min << ':' <<
+        std::setw(2) << tt.first.tm_sec << '.' <<
+        std::setw(3) << tt.second << "\"" << separator; // milliseconds
+    std::cout.fill(old_fill);
+    std::cout.setf(std::ios::fixed);
+    std::cout.precision(2);
+}
+
 std::vector<std::string> split(const std::string & str, const char delim);
 
 class PCM;
 bool CheckAndForceRTMAbortMode(const char * argv, PCM * m);
 
-void print_help_force_rtm_abort_mode(const int alignment);
+void print_help_force_rtm_abort_mode(const int alignment, const char * separator = "=>");
 
 template <class F>
 void parseParam(int argc, char* argv[], const char* param, F f)
@@ -325,19 +369,13 @@ public:
     MainLoop() {}
     bool parseArg(const char * arg)
     {
-        if (strncmp(arg, "-i", 2) == 0 ||
-            strncmp(arg, "/i", 2) == 0)
+        std::string arg_value;
+        if (extract_argument_value(arg, {"-i", "/i"}, arg_value))
         {
-            const auto cmd = std::string(arg);
-            const auto found = cmd.find('=', 2);
-            if (found != std::string::npos) {
-                const auto tmp = cmd.substr(found + 1);
-                if (!tmp.empty()) {
-                    numberOfIterations = (unsigned int)atoi(tmp.c_str());
-                }
-            }
+            numberOfIterations = (unsigned int)atoi(arg_value.c_str());
             return true;
         }
+        
         return false;
     }
     unsigned getNumberOfIterations() const
@@ -488,9 +526,12 @@ std::string safe_getenv(const char* env);
 #ifdef _MSC_VER
 inline HANDLE openMSRDriver()
 {
-    return CreateFile(L"\\\\.\\RDMSR", GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    return CreateFile(TEXT("\\\\.\\RDMSR"), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
 }
 #endif
+
+#define PCM_ENFORCE_FLUSH_OPTION else if (check_argument_equals(*argv, { "-f", "/f" })) { enforceFlush = true; continue; }
+void print_enforce_flush_option_help();
 
 // called before everything else to read '-s' arg and
 // silence all following err output
@@ -498,15 +539,67 @@ void check_and_set_silent(int argc, char * argv[], null_stream &nullStream2);
 
 void print_pid_collection_message(int pid);
 
+bool print_version(int argc, char * argv[]);
+
 inline bool isPIDOption(char * argv [])
 {
-    return strncmp(*argv, "-pid", 4) == 0 || strncmp(*argv, "/pid", 4) == 0;
+    return check_argument_equals(*argv, {"-pid", "/pid"});
 }
 
 inline void parsePID(int argc, char* argv[], int& pid)
 {
     parseParam(argc, argv, "pid", [&pid](const char* p) { if (p) pid = atoi(p); });
 }
+
+struct counter {
+    std::string h_event_name = "";
+    std::string v_event_name = "";
+    uint64_t ccr = 0;
+    int idx = 0; /* Some counters need to be placed in specific index */
+    int multiplier = 0;
+    int divider = 0;
+    uint32_t h_id = 0;
+    uint32_t v_id = 0;
+};
+
+struct data{
+    uint32_t width;
+    uint64_t value;
+};
+
+typedef enum{
+    EVT_LINE_START,
+    EVT_LINE_FIELD,
+    EVT_LINE_COMPLETE
+}evt_cb_type;
+
+std::string dos2unix(std::string in);
+
+std::string a_title (const std::string &init, const std::string &name);
+std::string a_data (std::string init, struct data d);
+std::string a_header_footer(std::string init, std::string name);
+std::string build_line(std::string init, std::string name, bool last_char, char this_char);
+std::string build_csv_row(const std::vector<std::string>& chunks, const std::string& delimiter);
+std::vector<struct data> prepare_data(const std::vector<uint64_t> &values, const std::vector<std::string> &headers);
+void display(const std::vector<std::string> &buff, std::ostream& stream);
+
+void print_nameMap(std::map<std::string,std::pair<uint32_t,std::map<std::string,uint32_t>>>& nameMap);
+int load_events(const std::string &fn, std::map<std::string, uint32_t> &ofm,
+                int (*p_fn_evtcb)(evt_cb_type, void *, counter &, std::map<std::string, uint32_t> &, std::string, uint64),
+                void *evtcb_ctx, std::map<std::string,std::pair<uint32_t,std::map<std::string,uint32_t>>> &nameMap);
+int load_events(const std::string &fn, std::map<std::string, uint32_t> &ofm,
+                int (*pfn_evtcb)(evt_cb_type, void *, counter &, std::map<std::string, uint32_t> &, std::string, uint64),
+                void *evtcb_ctx);
+
+bool get_cpu_bus(uint32 msmDomain, uint32 msmBus, uint32 msmDev, uint32 msmFunc, uint32 &cpuBusValid, std::vector<uint32> &cpuBusNo, int &cpuPackageId);
+
+#ifdef __linux__
+FILE * tryOpen(const char * path, const char * mode);
+std::string readSysFS(const char * path, bool silent = false);
+bool writeSysFS(const char * path, const std::string & value, bool silent = false);
+int readMaxFromSysFS(const char * path);
+bool readMapFromSysFS(const char * path, std::unordered_map<std::string, uint32> &result, bool silent = false);
+#endif
 
 
 } // namespace pcm

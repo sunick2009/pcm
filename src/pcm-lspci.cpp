@@ -1,15 +1,5 @@
-/*
-Copyright (c) 2017-2018, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2017-2022, Intel Corporation
 
 // written by Patrick Lu
 #include "cpucounters.h"
@@ -103,7 +93,10 @@ void scanBus(int bus, const PCIDB & pciDB)
     }
 }
 
-int main(int /*argc*/, char * /*argv*/[])
+
+PCM_MAIN_NOTHROW;
+
+int mainThrows(int /*argc*/, char * /*argv*/[])
 {
     PCIDB pciDB;
     load_PCIDB(pciDB);
@@ -111,11 +104,33 @@ int main(int /*argc*/, char * /*argv*/[])
 
     if (!m->isSkxCompatible())
     {
-        cerr << "Unsupported processor model (" << m->getCPUModel() << ").\n";
-        exit(EXIT_FAILURE);
+        cerr << "PCI tree display is currently not supported for processor model " << m->getCPUModel() << "\n";
     }
-    std::cout << "\n Display PCI tree information\n\n";
-    for(int bus=0; bus < 256; ++bus)
-        scanBus(bus, pciDB);
+    else
+    {
+        std::cout << "\n Display PCI tree information\n\n";
+        for (int bus = 0; bus < 256; ++bus)
+            scanBus(bus, pciDB);
+    }
+
+    cerr << "Scanning all devices in group 0\n";
+    for (uint32 bus = 0; bus < 256; ++bus)
+    {
+        for (uint32 device = 0; device < 32; ++device)
+        {
+            for (uint32 function = 0; function < 8; ++function)
+            {
+                if (PciHandleType::exists(0, bus, device, function))
+                {
+                    PciHandleType h(0, bus, device, function);
+                    uint32 value = 0;
+                    h.read32(0, &value);
+                    const uint32 vendor = extract_bits_ui(value, 0, 15);
+                    const uint32 deviceID = extract_bits_ui(value, 16, 31);
+                    std::cout << "0:" << bus << ":" << device << ":" << function << " vendor 0x" << std::hex << vendor << " device 0x" << deviceID << std::dec << "\n";
+                }
+            }
+        }
+    }
     return 0;
 }

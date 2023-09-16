@@ -1,15 +1,5 @@
-/*
-Copyright (c) 2009-2020, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2009-2022, Intel Corporation
 // written by Roman Dementiev
 //
 
@@ -23,6 +13,8 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 #undef PCM_DEBUG
 
+#ifndef KERNEL
+
 #include <iostream>
 #include <istream>
 #include <sstream>
@@ -32,6 +24,8 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #ifdef _MSC_VER
 #include <windows.h>
 #endif
+
+#endif // #ifndef KERNEL
 
 namespace pcm {
 
@@ -62,6 +56,7 @@ typedef signed int int32;
 
 constexpr auto IA32_PERF_GLOBAL_STATUS = 0x38E;
 constexpr auto IA32_PERF_GLOBAL_OVF_CTRL = 0x390;
+constexpr auto IA32_PEBS_ENABLE_ADDR = 0x3F1;
 
 #define PERF_MAX_FIXED_COUNTERS          (3)
 #define PERF_MAX_CUSTOM_COUNTERS         (8)
@@ -117,6 +112,13 @@ constexpr auto MSR_FRONTEND = 0x3F7;
 
 #define MEM_LOAD_UOPS_RETIRED_L2_HIT_EVTNR (0xD1)
 #define MEM_LOAD_UOPS_RETIRED_L2_HIT_UMASK (0x02)
+
+// Haswell on-core events
+
+constexpr auto HSX_L2_RQSTS_MISS_EVTNR = 0x24;
+constexpr auto HSX_L2_RQSTS_MISS_UMASK = 0x3f;
+constexpr auto HSX_L2_RQSTS_REFERENCES_EVTNR = 0x24;
+constexpr auto HSX_L2_RQSTS_REFERENCES_UMASK = 0xff;
 
 // Skylake on-core events
 
@@ -393,6 +395,8 @@ struct FixedEventControlRegister
     FixedEventControlRegister() : value(0) {}
 };
 
+#ifndef KERNEL
+
 inline std::ostream & operator << (std::ostream & o, const FixedEventControlRegister & reg)
 {
     o << "os0\t\t" << reg.fields.os0 << "\n";
@@ -413,6 +417,8 @@ inline std::ostream & operator << (std::ostream & o, const FixedEventControlRegi
     o << "reserved1\t" << reg.fields.reserved1 << "\n";
     return o;
 }
+
+#endif // #ifndef KERNEL
 
 // UNCORE COUNTER CONTROL
 
@@ -674,6 +680,11 @@ struct BecktonUncorePMUCNTCTLRegister
 #define KNX_EDC_CH_PCI_PMON_CTR1_ADDR (0xA08)
 #define KNX_EDC_CH_PCI_PMON_CTR0_ADDR (0xA00)
 
+#define SERVER_HBM_CH_PMON_BASE_ADDR      (0x141c00)
+#define SERVER_HBM_CH_PMON_STEP             (0x4000)
+#define SERVER_HBM_CH_PMON_SIZE             (0x1000)
+#define SERVER_HBM_BOX_PMON_STEP            (0x9000)
+
 #define SERVER_MC_CH_PMON_BASE_ADDR        (0x22800)
 #define SERVER_MC_CH_PMON_STEP             (0x4000)
 #define SERVER_MC_CH_PMON_SIZE             (0x1000)
@@ -724,6 +735,18 @@ struct BecktonUncorePMUCNTCTLRegister
 #define ICX_QPI_PORT2_REGISTER_DEV_ADDR  (4)
 #define ICX_QPI_PORT2_REGISTER_FUNC_ADDR (1)
 
+#define SPR_QPI_PORT0_REGISTER_DEV_ADDR  (1)
+#define SPR_QPI_PORT0_REGISTER_FUNC_ADDR (1)
+
+#define SPR_QPI_PORT1_REGISTER_DEV_ADDR  (2)
+#define SPR_QPI_PORT1_REGISTER_FUNC_ADDR (1)
+
+#define SPR_QPI_PORT2_REGISTER_DEV_ADDR  (3)
+#define SPR_QPI_PORT2_REGISTER_FUNC_ADDR (1)
+
+#define SPR_QPI_PORT3_REGISTER_DEV_ADDR  (4)
+#define SPR_QPI_PORT3_REGISTER_FUNC_ADDR (1)
+
 #define QPI_PORT0_MISC_REGISTER_FUNC_ADDR (0)
 #define QPI_PORT1_MISC_REGISTER_FUNC_ADDR (0)
 #define QPI_PORT2_MISC_REGISTER_FUNC_ADDR (0)
@@ -755,6 +778,15 @@ constexpr auto ICX_M3UPI_PORT0_REGISTER_FUNC_ADDR = (1);
 constexpr auto ICX_M3UPI_PORT1_REGISTER_FUNC_ADDR = (1);
 constexpr auto ICX_M3UPI_PORT2_REGISTER_FUNC_ADDR = (1);
 
+constexpr auto SPR_M3UPI_PORT0_REGISTER_DEV_ADDR = 5;
+constexpr auto SPR_M3UPI_PORT1_REGISTER_DEV_ADDR = 6;
+constexpr auto SPR_M3UPI_PORT2_REGISTER_DEV_ADDR = 7;
+constexpr auto SPR_M3UPI_PORT3_REGISTER_DEV_ADDR = 8;
+constexpr auto SPR_M3UPI_PORT0_REGISTER_FUNC_ADDR = 1;
+constexpr auto SPR_M3UPI_PORT1_REGISTER_FUNC_ADDR = 1;
+constexpr auto SPR_M3UPI_PORT2_REGISTER_FUNC_ADDR = 1;
+constexpr auto SPR_M3UPI_PORT3_REGISTER_FUNC_ADDR = 1;
+
 #define SKX_M2M_0_REGISTER_DEV_ADDR  (8)
 #define SKX_M2M_0_REGISTER_FUNC_ADDR (0)
 #define SKX_M2M_1_REGISTER_DEV_ADDR  (9)
@@ -768,6 +800,42 @@ constexpr auto ICX_M3UPI_PORT2_REGISTER_FUNC_ADDR = (1);
 #define SERVER_M2M_2_REGISTER_FUNC_ADDR (0)
 #define SERVER_M2M_3_REGISTER_DEV_ADDR  (15)
 #define SERVER_M2M_3_REGISTER_FUNC_ADDR (0)
+
+constexpr auto SERVER_HBM_M2M_0_REGISTER_DEV_ADDR = 12;
+constexpr auto SERVER_HBM_M2M_0_REGISTER_FUNC_ADDR = 1;
+constexpr auto SERVER_HBM_M2M_1_REGISTER_DEV_ADDR = 13;
+constexpr auto SERVER_HBM_M2M_1_REGISTER_FUNC_ADDR = 1;
+constexpr auto SERVER_HBM_M2M_2_REGISTER_DEV_ADDR = 14;
+constexpr auto SERVER_HBM_M2M_2_REGISTER_FUNC_ADDR = 1;
+constexpr auto SERVER_HBM_M2M_3_REGISTER_DEV_ADDR = 15;
+constexpr auto SERVER_HBM_M2M_3_REGISTER_FUNC_ADDR = 1;
+
+constexpr auto SERVER_HBM_M2M_4_REGISTER_DEV_ADDR = 12;
+constexpr auto SERVER_HBM_M2M_4_REGISTER_FUNC_ADDR = 2;
+constexpr auto SERVER_HBM_M2M_5_REGISTER_DEV_ADDR = 13;
+constexpr auto SERVER_HBM_M2M_5_REGISTER_FUNC_ADDR = 2;
+constexpr auto SERVER_HBM_M2M_6_REGISTER_DEV_ADDR = 14;
+constexpr auto SERVER_HBM_M2M_6_REGISTER_FUNC_ADDR = 2;
+constexpr auto SERVER_HBM_M2M_7_REGISTER_DEV_ADDR = 15;
+constexpr auto SERVER_HBM_M2M_7_REGISTER_FUNC_ADDR = 2;
+
+constexpr auto SERVER_HBM_M2M_8_REGISTER_DEV_ADDR = 12;
+constexpr auto SERVER_HBM_M2M_8_REGISTER_FUNC_ADDR = 3;
+constexpr auto SERVER_HBM_M2M_9_REGISTER_DEV_ADDR = 13;
+constexpr auto SERVER_HBM_M2M_9_REGISTER_FUNC_ADDR = 3;
+constexpr auto SERVER_HBM_M2M_10_REGISTER_DEV_ADDR = 14;
+constexpr auto SERVER_HBM_M2M_10_REGISTER_FUNC_ADDR = 3;
+constexpr auto SERVER_HBM_M2M_11_REGISTER_DEV_ADDR = 15;
+constexpr auto SERVER_HBM_M2M_11_REGISTER_FUNC_ADDR = 3;
+
+constexpr auto SERVER_HBM_M2M_12_REGISTER_DEV_ADDR = 12;
+constexpr auto SERVER_HBM_M2M_12_REGISTER_FUNC_ADDR = 4;
+constexpr auto SERVER_HBM_M2M_13_REGISTER_DEV_ADDR = 13;
+constexpr auto SERVER_HBM_M2M_13_REGISTER_FUNC_ADDR = 4;
+constexpr auto SERVER_HBM_M2M_14_REGISTER_DEV_ADDR = 14;
+constexpr auto SERVER_HBM_M2M_14_REGISTER_FUNC_ADDR = 4;
+constexpr auto SERVER_HBM_M2M_15_REGISTER_DEV_ADDR = 15;
+constexpr auto SERVER_HBM_M2M_15_REGISTER_FUNC_ADDR = 4;
 
 #define SKX_M2M_PCI_PMON_BOX_CTL_ADDR (0x258)
 
@@ -819,6 +887,8 @@ constexpr auto MSR_UNCORE_PMON_GLOBAL_CTL = 0x700;
 
 constexpr auto IVT_MSR_UNCORE_PMON_GLOBAL_CTL = 0x0C00;
 
+constexpr auto SPR_MSR_UNCORE_PMON_GLOBAL_CTL = 0x2FF0;
+
 #define PCM_INVALID_DEV_ADDR (~(uint32)0UL)
 #define PCM_INVALID_FUNC_ADDR (~(uint32)0UL)
 
@@ -860,12 +930,24 @@ constexpr auto IVT_MSR_UNCORE_PMON_GLOBAL_CTL = 0x0C00;
 #define ICX_UPI_PCI_PMON_CTR1_ADDR (0x328)
 #define ICX_UPI_PCI_PMON_CTR0_ADDR (0x320)
 
+constexpr auto SPR_UPI_PCI_PMON_BOX_CTL_ADDR =  0x318;
+constexpr auto SPR_UPI_PCI_PMON_CTL0_ADDR =     0x350;
+constexpr auto SPR_UPI_PCI_PMON_CTR0_ADDR =     0x320;
+
 #define UCLK_FIXED_CTR_ADDR (0x704)
 #define UCLK_FIXED_CTL_ADDR (0x703)
 #define UBOX_MSR_PMON_CTL0_ADDR (0x705)
 #define UBOX_MSR_PMON_CTL1_ADDR (0x706)
 #define UBOX_MSR_PMON_CTR0_ADDR (0x709)
 #define UBOX_MSR_PMON_CTR1_ADDR (0x70a)
+
+constexpr auto SPR_UCLK_FIXED_CTR_ADDR = 0x2FDF;
+constexpr auto SPR_UCLK_FIXED_CTL_ADDR = 0x2FDE;
+constexpr auto SPR_UBOX_MSR_PMON_BOX_CTL_ADDR = 0x2FD0;
+constexpr auto SPR_UBOX_MSR_PMON_CTL0_ADDR = 0x2FD2;
+constexpr auto SPR_UBOX_MSR_PMON_CTL1_ADDR = 0x2FD3;
+constexpr auto SPR_UBOX_MSR_PMON_CTR0_ADDR = 0X2FD8;
+constexpr auto SPR_UBOX_MSR_PMON_CTR1_ADDR = 0X2FD9;
 
 constexpr auto JKTIVT_UCLK_FIXED_CTR_ADDR = (0x0C09);
 constexpr auto JKTIVT_UCLK_FIXED_CTL_ADDR = (0x0C08);
@@ -907,6 +989,10 @@ constexpr auto JKTIVT_UBOX_MSR_PMON_CTR1_ADDR = (0x0C17);
 #define UNC_PMON_UNIT_CTL_FRZ  (1 << 8)
 #define UNC_PMON_UNIT_CTL_FRZ_EN   (1 << 16)
 #define UNC_PMON_UNIT_CTL_RSV  ((1 << 16) + (1 << 17))
+
+#define SPR_UNC_PMON_UNIT_CTL_FRZ          (1 << 0)
+#define SPR_UNC_PMON_UNIT_CTL_RST_CONTROL  (1 << 8)
+#define SPR_UNC_PMON_UNIT_CTL_RST_COUNTERS (1 << 9)
 
 #define UNC_PMON_UNIT_CTL_VALID_BITS_MASK  ((1 << 17) - 1)
 
@@ -1025,6 +1111,12 @@ static const uint32 SNR_CHA_MSR_PMON_BOX_CTL[] = {
 #define SERVER_CHA_MSR_PMON_CTR3_OFFSET        (11)
 */
 
+constexpr auto SPR_CHA0_MSR_PMON_BOX_CTRL   = 0x2000;
+constexpr auto SPR_CHA0_MSR_PMON_CTL0       = 0x2002;
+constexpr auto SPR_CHA0_MSR_PMON_CTR0       = 0x2008;
+constexpr auto SPR_CHA0_MSR_PMON_BOX_FILTER = 0x200E;
+constexpr auto SPR_CHA_MSR_STEP = 0x10;
+
 #define CBO_MSR_PMON_CTL_EVENT(x) (x << 0)
 #define CBO_MSR_PMON_CTL_UMASK(x) (x << 8)
 #define CBO_MSR_PMON_CTL_RST    (1 << 17)
@@ -1034,6 +1126,8 @@ static const uint32 SNR_CHA_MSR_PMON_BOX_CTL[] = {
 #define CBO_MSR_PMON_CTL_INVERT (1 << 23)
 #define CBO_MSR_PMON_CTL_THRESH(x) (x << 24UL)
 #define UNC_PMON_CTL_UMASK_EXT(x) (uint64(x) << 32ULL)
+#define UNC_PMON_CTL_EVENT(x) (x << 0)
+#define UNC_PMON_CTL_UMASK(x) (x << 8)
 
 #define JKT_CBO_MSR_PMON_BOX_FILTER_OPC(x) (x << 23UL)
 #define IVTHSX_CBO_MSR_PMON_BOX_FILTER1_OPC(x) (x << 20UL)
@@ -1083,6 +1177,24 @@ static const uint32 ICX_IIO_UNIT_CTL[] = {
     0x0A50, 0x0A70, 0x0A90, 0x0AE0, 0x0B00, 0x0B20
 };
 
+static const uint32 SPR_IRP_UNIT_CTL[] = {
+    0x3400,
+    0x3410,
+    0x3420,
+    0x3430,
+    0x3440,
+    0x3450,
+    0x3460,
+    0x3470,
+    0x3480,
+    0x3490,
+    0x34A0,
+    0x34B0
+};
+
+#define SPR_IRP_CTL_REG_OFFSET      (0x0002)
+#define SPR_IRP_CTR_REG_OFFSET      (0x0008)
+
 static const uint32 ICX_IRP_UNIT_CTL[] = {
     0x0A4A,
     0x0A6A,
@@ -1124,6 +1236,14 @@ static const uint32 SKX_IRP_UNIT_CTL[] = {
 #define SNR_IIO_CBDMA_CTR0          (0x1E01)
 #define SNR_IIO_CBDMA_CTL0          (0x1E08)
 #define SNR_IIO_PM_REG_STEP         (0x0010)
+
+constexpr auto SPR_M2IOSF_IIO_UNIT_CTL = 0x3000;
+constexpr auto SPR_M2IOSF_IIO_CTR0     = 0x3008;
+constexpr auto SPR_M2IOSF_IIO_CTL0     = 0x3002;
+constexpr auto SPR_M2IOSF_REG_STEP = 0x10;
+constexpr auto SPR_M2IOSF_NUM      = 12;
+
+constexpr auto CXL_PMON_SIZE = 0x1000;
 
 #define IIO_MSR_PMON_CTL_EVENT(x)   ((x) << 0)
 #define IIO_MSR_PMON_CTL_UMASK(x)   ((x) << 8)
@@ -1266,6 +1386,8 @@ union cvt_ds
     } ui32;
 };
 
+#ifndef KERNEL
+
 struct MCFGRecord
 {
     unsigned long long baseAddress;
@@ -1280,7 +1402,7 @@ struct MCFGRecord
     void print()
     {
         std::cout << "BaseAddress=" << (std::hex) << "0x" << baseAddress << " PCISegmentGroupNumber=0x" << PCISegmentGroupNumber <<
-            " startBusNumber=0x" << (unsigned)startBusNumber << " endBusNumber=0x" << (unsigned)endBusNumber << "\n";
+            " startBusNumber=0x" << (unsigned)startBusNumber << " endBusNumber=0x" << (unsigned)endBusNumber << "\n" << std::dec;
     }
 };
 
@@ -1307,6 +1429,52 @@ struct MCFGHeader
         std::cout << "Header: length=" << length << " nrecords=" << nrecords() << "\n";
     }
 };
+
+#endif // #ifndef KERNEL
+
+//IDX accel device/func number(PCIe).
+//The device/function number from SPR register guide.
+#define SPR_IDX_IAA_REGISTER_DEV_ADDR  (2)
+#define SPR_IDX_IAA_REGISTER_FUNC_ADDR (0)
+
+#define SPR_IDX_DSA_REGISTER_DEV_ADDR  (1)
+#define SPR_IDX_DSA_REGISTER_FUNC_ADDR (0)
+
+#define SPR_IDX_QAT_REGISTER_DEV_ADDR  (0)
+#define SPR_IDX_QAT_REGISTER_FUNC_ADDR (0)
+
+//IDX accel perfmon register offset
+//The offset of register from DSA external architecture spec(intel-data-streaming-accelerator-preliminary-architecture-specification).
+#define SPR_IDX_ACCEL_PCICMD_OFFSET        (0x4)
+#define SPR_IDX_ACCEL_BAR0_OFFSET          (0x10)
+#define SPR_IDX_ACCEL_BAR0_SIZE            (0x10000)
+#define SPR_IDX_ACCEL_TABLE_OFFSET         (0x60)
+#define SPR_IDX_ACCEL_PMON_BASE_OFFSET     (0x68)
+#define SPR_IDX_ACCEL_PMON_BASE_MASK       (0xFFFF)
+#define SPR_IDX_ACCEL_PMON_BASE_RATIO      (0x100)
+#define SPR_IDX_ACCEL_PMCSR_OFFSET         (0x94)
+
+#define SPR_IDX_PMON_RESET_CTL_OFFSET              (0x10)
+#define SPR_IDX_PMON_FREEZE_CTL_OFFSET             (0x20)
+#define SPR_IDX_PMON_CTL_OFFSET(x)                 (0x100 + ((x)*8))
+#define SPR_IDX_PMON_CTR_OFFSET(x)                 (0x200 + ((x)*8))
+#define SPR_IDX_PMON_FILTER_WQ_OFFSET(x)           (0x300 + ((x)*32))
+#define SPR_IDX_PMON_FILTER_TC_OFFSET(x)           (0x304 + ((x)*32))
+#define SPR_IDX_PMON_FILTER_PGSZ_OFFSET(x)         (0x308 + ((x)*32))
+#define SPR_IDX_PMON_FILTER_XFERSZ_OFFSET(x)       (0x30C + ((x)*32))
+#define SPR_IDX_PMON_FILTER_ENG_OFFSET(x)          (0x310 + ((x)*32))
+
+//MSM device/func number and register offset from SPR register guide.
+constexpr auto SPR_MSM_DEV_ID                       = 0x09a6;
+constexpr auto SPR_MSM_DEV_ADDR                     = 0x03;
+constexpr auto SPR_MSM_FUNC_ADDR                    = 0x00;
+constexpr auto SPR_MSM_REG_CPUBUSNO_VALID_OFFSET    = 0x1a0;
+constexpr auto SPR_MSM_REG_CPUBUSNO0_OFFSET         = 0x190;
+constexpr auto SPR_MSM_REG_CPUBUSNO4_OFFSET         = 0x1c0;
+constexpr auto SPR_MSM_CPUBUSNO_MAX                 = 32;
+
+//SAD register offset from SPR register guide.
+constexpr auto SPR_SAD_REG_CTL_CFG_OFFSET           = 0x3F4;
 
 } // namespace pcm
 

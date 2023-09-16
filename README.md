@@ -1,23 +1,22 @@
 --------------------------------------------------------------------------------
-Processor Counter Monitor (PCM)
+Intel&reg; Performance Counter Monitor (Intel&reg; PCM)
 --------------------------------------------------------------------------------
 
 [PCM Tools](#pcm-tools) | [Building PCM](#building-pcm-tools) | [Downloading Pre-Compiled PCM](#downloading-pre-compiled-pcm-tools) | [FAQ](#frequently-asked-questions-faq) | [API Documentation](#pcm-api-documentation) | [Environment Variables](#pcm-environment-variables) | [Compilation Options](#custom-compilation-options)
 
-Processor Counter Monitor (PCM) is an application programming interface (API) and a set of tools based on the API to monitor performance and energy metrics of Intel&reg; Core&trade;, Xeon&reg;, Atom&trade; and Xeon Phi&trade; processors. PCM works on Linux, Windows, Mac OS X, FreeBSD, DragonFlyBSD and ChromeOS operating systems.
+Intel&reg; Performance Counter Monitor (Intel&reg; PCM) is an application programming interface (API) and a set of tools based on the API to monitor performance and energy metrics of Intel&reg; Core&trade;, Xeon&reg;, Atom&trade; and Xeon Phi&trade; processors. PCM works on Linux, Windows, Mac OS X, FreeBSD, DragonFlyBSD and ChromeOS operating systems.
 
 *Github repository statistics:* ![Custom badge](https://img.shields.io/endpoint?url=https%3A%2F%2Fhetthbszh0.execute-api.us-east-2.amazonaws.com%2Fdefault%2Fpcm-clones) ![Custom badge](https://img.shields.io/endpoint?url=https%3A%2F%2F5urjfrshcd.execute-api.us-east-2.amazonaws.com%2Fdefault%2Fpcm-yesterday-clones) ![Custom badge](https://img.shields.io/endpoint?url=https%3A%2F%2Fcsqqh18g3l.execute-api.us-east-2.amazonaws.com%2Fdefault%2Fpcm-today-clones)
-
-*Code quality:* [![Language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/opcm/pcm.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/opcm/pcm/context:cpp) [![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/opcm/pcm.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/opcm/pcm/context:python)
 
 --------------------------------------------------------------------------------
 Current Build Status
 --------------------------------------------------------------------------------
 
-- Linux and OSX: [![Build Status](https://travis-ci.com/opcm/pcm.svg?branch=master)](https://travis-ci.com/opcm/pcm)
-- Windows: [![Build status](https://ci.appveyor.com/api/projects/status/github/opcm/pcm?branch=master&svg=true)](https://ci.appveyor.com/project/opcm/pcm)
-- FreeBSD: [![Build Status](https://api.cirrus-ci.com/github/opcm/pcm.svg)](https://cirrus-ci.com/github/opcm/pcm)
-- Docker Hub: [![Build status](https://img.shields.io/docker/cloud/build/opcm/pcm.svg)](doc/DOCKER_README.md) [![pulls](https://img.shields.io/docker/pulls/opcm/pcm.svg)](doc/DOCKER_README.md)
+- Linux: [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/intel/pcm/linux_make.yml?branch=master)](https://github.com/intel/pcm/actions/workflows/linux_make.yml?query=branch%3Amaster)
+- Windows: [![Build status](https://ci.appveyor.com/api/projects/status/github/intel/pcm?branch=master&svg=true)](https://ci.appveyor.com/project/opcm/pcm)
+- FreeBSD: [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/intel/pcm/freebsd_build.yml?branch=master)](https://github.com/intel/pcm/actions/workflows/freebsd_build.yml?query=branch%3Amaster)
+- OS X: [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/intel/pcm/macosx_build.yml?branch=master)](https://github.com/intel/pcm/actions/workflows/macosx_build.yml?query=branch%3Amaster)
+- Docker container: [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/intel/pcm/docker.yml?branch=master)](doc/DOCKER_README.md)
 
 --------------------------------------------------------------------------------
 PCM Tools
@@ -30,9 +29,13 @@ PCM provides a number of command-line utilities for real-time monitoring:
 - **pcm-sensor-server** : pcm collector exposing metrics over http in JSON or Prometheus (exporter text based) format ([how-to](doc/PCM-EXPORTER.md)). Also available as a [docker container](doc/DOCKER_README.md). More info about Global PCM events is [here](doc/PCM-SENSOR-SERVER-README.md).
 - **pcm-memory** : monitor memory bandwidth (per-channel and per-DRAM DIMM rank)
 ![pcm-memory output](https://raw.githubusercontent.com/wiki/opcm/pcm/pcm-memory.x.JPG)
+- **pcm-accel** : [monitor Intel® In-Memory Analytics Accelerator (Intel® IAA), Intel® Data Streaming Accelerator (Intel® DSA) and Intel® QuickAssist Technology (Intel® QAT)  accelerators](doc/PCM_ACCEL_README.md)
+![image](https://user-images.githubusercontent.com/25432609/218480696-42ade94f-e0c3-4000-9dd8-39a0e75a210e.png)
+
 - **pcm-latency** : monitor L1 cache miss and DDR/PMM memory latency
 - **pcm-pcie** : monitor PCIe bandwidth per-socket
 - **pcm-iio** : monitor PCIe bandwidth per PCIe device
+
 ![pcm-iio output](https://raw.githubusercontent.com/wiki/opcm/pcm/pcm-iio.png)
 - **pcm-numa** : monitor local and remote memory accesses
 - **pcm-power** : monitor sleep and energy states of processor, Intel(r) Quick Path Interconnect, DRAM memory, reasons of CPU frequency throttling and other energy-related metrics
@@ -55,6 +58,18 @@ And finally a daemon that stores core, memory and QPI counters in shared memory 
 Building PCM Tools
 --------------------------------------------------------------------------------
 
+Clone PCM repository with submodules:
+
+```
+git clone --recursive https://github.com/opcm/pcm.git
+```
+
+or clone the repository first, and then update submodules with:
+
+```
+git submodule update --init --recursive
+```
+
 Install cmake then:
 
 ```
@@ -76,17 +91,53 @@ On Windows and MacOs additional drivers are required. Please find instructions h
 
 FreeBSD/DragonFlyBSD-specific details can be found in [FREEBSD_HOWTO.txt](doc/FREEBSD_HOWTO.txt)
 
+![pcm-build-run-2](https://user-images.githubusercontent.com/25432609/205663554-c4fa1724-6286-495a-9dbd-0104de3f535f.gif)
 
 --------------------------------------------------------------------------------
 Downloading Pre-Compiled PCM Tools
 --------------------------------------------------------------------------------
 
 - Linux:
+  * Ubuntu/Debian: `sudo apt install pcm`
   * openSUSE: `sudo zypper install pcm`
+  * RHEL8.5 or later: `sudo dnf install pcm` 
   * Fedora: `sudo yum install pcm`
   * RPMs and DEBs with the *latest* PCM version for RHEL/SLE/Ubuntu/Debian/openSUSE/etc distributions (binary and source) are available [here](https://software.opensuse.org/download/package?package=pcm&project=home%3Aopcm)
 - Windows: download PCM binaries as [appveyor build service](https://ci.appveyor.com/project/opcm/pcm/history) artifacts and required Visual C++ Redistributable from [www.microsoft.com](https://www.microsoft.com/en-us/download/details.aspx?id=48145). Additional drivers are needed, see [WINDOWS_HOWTO.md](doc/WINDOWS_HOWTO.md).
 - Docker: see [instructions on how to use pcm-sensor-server pre-compiled container from docker hub](doc/DOCKER_README.md).
+
+--------------------------------------------------------------------------------
+Executing PCM tools under non-root user on Linux
+--------------------------------------------------------------------------------
+
+Executing PCM tools under an unprivileged user on a Linux operating system is feasible. However, there are certain prerequisites that need to be met, such as having Linux perf_event support for your processor in the Linux kernel version you are currently running. To successfully run the PCM tools, you need to set the `/proc/sys/kernel/perf_event_paranoid` setting to -1 as root once:
+
+```
+echo -1 > /proc/sys/kernel/perf_event_paranoid
+```
+
+and configure two specific environment variables when running the tools under a non-root user:
+
+```
+export PCM_NO_MSR=1
+export PCM_KEEP_NMI_WATCHDOG=1
+```
+
+For instance, you can execute the following commands to set the environment variables and run pcm:
+
+```
+export PCM_NO_MSR=1
+export PCM_KEEP_NMI_WATCHDOG=1
+pcm
+```
+
+or (to run the pcm sensor server as non-root):
+
+```
+PCM_NO_MSR=1 PCM_KEEP_NMI_WATCHDOG=1 pcm-sensor-server
+```
+
+Please keep in mind that when executing PCM tools under an unprivileged user on Linux, certain PCM metrics may be unavailable. This limitation specifically affects metrics that rely solely on direct MSR (Model-Specific Register) register access. Due to the restricted privileges of the user, accessing these registers is not permitted, resulting in the absence of corresponding metrics.
 
 --------------------------------------------------------------------------------
 Frequently Asked Questions (FAQ)
@@ -124,4 +175,3 @@ This creates package:
 - "pcm-VERSION-Linux.deb" on Debian family systems;
 - "pcm-VERSION-Linux.rpm" on Redhat/SUSE-family systems.
 Packages contain pcm-\* binaries and required for usage opCode-\* files.
-

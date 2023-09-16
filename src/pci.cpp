@@ -1,15 +1,5 @@
-/*
-Copyright (c) 2009-2018, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2009-2022, Intel Corporation
 // written by Roman Dementiev,
 //            Pat Fay
 //	      Austen Ott
@@ -267,6 +257,7 @@ bool PciHandle::exists(uint32 groupnr_, uint32 bus_, uint32 device_, uint32 func
     struct pci_match_conf pattern;
     struct pci_conf conf[4];
     int fd;
+    int ret;
 
     fd = ::open("/dev/pci", O_RDWR, 0);
     if (fd < 0) return false;
@@ -284,7 +275,10 @@ bool PciHandle::exists(uint32 groupnr_, uint32 bus_, uint32 device_, uint32 func
     pc.match_buf_len = sizeof(conf);
     pc.matches = conf;
 
-    if (ioctl(fd, PCIOCGETCONF, &pc)) return false;
+    ret = ioctl(fd, PCIOCGETCONF, &pc);
+    ::close(fd);
+
+    if (ret) return false;
 
     if (pc.status != PCI_GETCONF_LAST_DEVICE) return false;
 
@@ -509,9 +503,9 @@ PciHandleM::PciHandleM(uint32 bus_, uint32 device_, uint32 function_) :
         throw std::exception();
     }
 
-    // std::cout << "PCI config base addr: "<< std::hex << base_addr<< "\n";
+    // std::cout << "PCI config base addr: "<< std::hex << base_addr<< "\n" << std::dec;
 
-    base_addr += (bus * 1024 * 1024 + device * 32 * 1024 + function * 4 * 1024);
+    base_addr += (bus * 1024ULL * 1024ULL + device * 32ULL * 1024ULL + function * 4ULL * 1024ULL);
 }
 
 
@@ -652,7 +646,7 @@ PciHandleMM::PciHandleMM(uint32 groupnr_, uint32 bus_, uint32 device_, uint32 fu
 
     base_addr = mcfgRecords[segment].baseAddress;
 
-    base_addr += (bus * 1024 * 1024 + device * 32 * 1024 + function * 4 * 1024);
+    base_addr += (bus * 1024ULL * 1024ULL + device * 32ULL * 1024ULL + function * 4ULL * 1024ULL);
 
     mmapAddr = (char *)mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, base_addr);
 

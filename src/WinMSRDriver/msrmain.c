@@ -1,15 +1,5 @@
-/*
-Copyright (c) 2009-2018, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2009-2022, Intel Corporation
 
 /*
 
@@ -266,8 +256,11 @@ NTSTATUS deviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 slot.u.AsULONG = 0;
                 slot.u.bits.DeviceNumber = input_pcicfg_req->dev;
                 slot.u.bits.FunctionNumber = input_pcicfg_req->func;
+#pragma warning(push)
+#pragma warning(disable: 4996)
                 size = HalSetBusDataByOffset(PCIConfiguration, input_pcicfg_req->bus, slot.u.AsULONG,
                                              &(input_pcicfg_req->write_value), input_pcicfg_req->reg, input_pcicfg_req->bytes);
+#pragma warning(pop)
                 if (size != input_pcicfg_req->bytes)
                 {
                     status = STATUS_INVALID_PARAMETER;
@@ -284,14 +277,17 @@ NTSTATUS deviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 slot.u.AsULONG = 0;
                 slot.u.bits.DeviceNumber = input_pcicfg_req->dev;
                 slot.u.bits.FunctionNumber = input_pcicfg_req->func;
+#pragma warning(push)
+#pragma warning(disable: 4996)
                 size = HalGetBusDataByOffset(PCIConfiguration, input_pcicfg_req->bus, slot.u.AsULONG,
                                              output, input_pcicfg_req->reg, input_pcicfg_req->bytes);
+#pragma warning(pop)
                 if (size != input_pcicfg_req->bytes)
                 {
                     status = STATUS_INVALID_PARAMETER;
                     break;
                 }
-                Irp->IoStatus.Information = sizeof(ULONG64);                                         // result size
+                Irp->IoStatus.Information = size;                                         // result size
                 break;
 
             default:

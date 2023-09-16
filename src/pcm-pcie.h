@@ -1,17 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2020-2022, Intel Corporation
 #pragma once
-/*
-
-   Copyright (c) 2020, Intel Corporation
-   All rights reserved.
-
-   Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
- * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
- * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
 //written by Roman Sudarikov
 
 #include <iostream>
@@ -142,8 +131,8 @@ public:
         int eventsCount = 0;
         for (auto &group : eventGroups) eventsCount += (int)group.size();
 
-        m_delay = uint32(delay * 1000 / (eventGroups.size()) / NUM_SAMPLES);
-        if (m_delay * eventsCount * NUM_SAMPLES < delay * 1000) ++m_delay;
+        // Delay for each multiplexing group. Counters will be scaled.
+        m_delay = uint32(delay / eventGroups.size() / NUM_SAMPLES);
 
         eventSample.resize(m_socketCount);
         for (auto &e: eventSample)
@@ -193,11 +182,12 @@ void LegacyPlatform::getEventGroup(eventGroup_t &eventGroup)
     m_pcm->programPCIeEventGroup(eventGroup);
     uint offset = eventGroupOffset(eventGroup);
 
-    for (auto &run : eventCount) {
-        for(uint skt =0; skt < m_socketCount; ++skt)
+    for (int run = before; run < total; run++) {
+        for (uint skt = 0; skt < m_socketCount; ++skt)
             for (uint ctr = 0; ctr < eventGroup.size(); ++ctr)
-                run[skt][ctr + offset] = m_pcm->getPCIeCounterData(skt, ctr);
-        MySleepMs(m_delay);
+                eventCount[run][skt][ctr + offset] = m_pcm->getPCIeCounterData(skt, ctr);
+        if (run == before)
+            MySleepMs(m_delay);
     }
 
     for(uint skt = 0; skt < m_socketCount; ++skt)
@@ -351,6 +341,136 @@ void LegacyPlatform::printAggregatedEvents()
         else
             cout << "\n\n";
     }
+}
+
+//SPR
+class EagleStreamPlatform: public LegacyPlatform
+{
+public:
+    EagleStreamPlatform(PCM *m, bool csv, bool bandwidth, bool verbose, uint32 delay) :
+        LegacyPlatform( {"PCIRdCur", "ItoM", "ItoMCacheNear", "UCRdF", "WiL", "WCiL", "WCiLF"},
+                        {
+                            {0xC8F3FE00000435, 0xC8F3FD00000435, 0xCC43FE00000435, 0xCC43FD00000435},
+                            {0xCD43FE00000435, 0xCD43FD00000435, 0xC877DE00000135, 0xC87FDE00000135},
+                            {0xC86FFE00000135, 0xC867FE00000135,},
+                        },
+                        m, csv, bandwidth, verbose, delay)
+    {
+    };
+
+private:
+    enum eventIdx {
+        PCIRdCur,
+        ItoM,
+        ItoMCacheNear,
+        UCRdF,
+        WiL,
+        WCiL,
+        WCiLF
+    };
+
+    enum Events {
+            PCIRdCur_miss,
+            PCIRdCur_hit,
+            ItoM_miss,
+            ItoM_hit,
+            ItoMCacheNear_miss,
+            ItoMCacheNear_hit,
+            UCRdF_miss,
+            WiL_miss,
+            WCiL_miss,
+            WCiLF_miss,
+            eventLast
+    };
+
+    virtual uint64 getReadBw(uint socket, eventFilter filter);
+    virtual uint64 getWriteBw(uint socket, eventFilter filter);
+    virtual uint64 getReadBw();
+    virtual uint64 getWriteBw();
+    virtual uint64 event(uint socket, eventFilter filter, uint idx);
+};
+
+uint64 EagleStreamPlatform::event(uint socket, eventFilter filter, uint idx)
+{
+    uint64 event = 0;
+    switch (idx)
+    {
+        case PCIRdCur:
+            if(filter == TOTAL)
+                event = eventSample[socket][PCIRdCur_miss] +
+                        eventSample[socket][PCIRdCur_hit];
+                else if (filter == MISS)
+                    event = eventSample[socket][PCIRdCur_miss];
+                else if (filter == HIT)
+                    event = eventSample[socket][PCIRdCur_hit];
+            break;
+        case ItoM:
+            if(filter == TOTAL)
+                event = eventSample[socket][ItoM_miss] +
+                        eventSample[socket][ItoM_hit];
+                else if (filter == MISS)
+                    event = eventSample[socket][ItoM_miss];
+                else if (filter == HIT)
+                    event = eventSample[socket][ItoM_hit];
+            break;
+        case ItoMCacheNear:
+            if(filter == TOTAL)
+                event = eventSample[socket][ItoMCacheNear_miss] +
+                        eventSample[socket][ItoMCacheNear_hit];
+                else if (filter == MISS)
+                    event = eventSample[socket][ItoMCacheNear_miss];
+                else if (filter == HIT)
+                    event = eventSample[socket][ItoMCacheNear_hit];
+            break;
+        case UCRdF:
+                if(filter == TOTAL || filter == MISS)
+                    event = eventSample[socket][UCRdF_miss];
+            break;
+        case WiL:
+                if(filter == TOTAL || filter == MISS)
+                    event = eventSample[socket][WiL_miss];
+            break;
+        case WCiL:
+                if(filter == TOTAL || filter == MISS)
+                    event = eventSample[socket][WCiL_miss];
+            break;
+        case WCiLF:
+                if(filter == TOTAL || filter == MISS)
+                    event = eventSample[socket][WCiLF_miss];
+            break;
+        default:
+            break;
+    }
+    return event;
+}
+
+uint64 EagleStreamPlatform::getReadBw(uint socket, eventFilter filter)
+{
+    uint64 readBw = event(socket, filter, PCIRdCur);
+    return (readBw * 64ULL);
+}
+
+uint64 EagleStreamPlatform::getWriteBw(uint socket, eventFilter filter)
+{
+    uint64 writeBw = event(socket, filter, ItoM) +
+                     event(socket, filter, ItoMCacheNear);
+    return (writeBw * 64ULL);
+}
+uint64 EagleStreamPlatform::getReadBw()
+{
+    uint64 readBw = 0;
+    for (uint socket = 0; socket < m_socketCount; socket++)
+        readBw += (event(socket, TOTAL, PCIRdCur));
+    return (readBw * 64ULL);
+}
+
+uint64 EagleStreamPlatform::getWriteBw()
+{
+    uint64 writeBw = 0;
+    for (uint socket = 0; socket < m_socketCount; socket++)
+        writeBw += (event(socket, TOTAL, ItoM) +
+                    event(socket, TOTAL, ItoMCacheNear));
+    return (writeBw * 64ULL);
 }
 
 //ICX

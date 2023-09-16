@@ -1,15 +1,5 @@
-/*
-Copyright (c) 2018, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2018-2022, Intel Corporation
 //
 // written by Subhiksha Ravisundar
 #include "cpucounters.h"
@@ -460,18 +450,30 @@ void collect_data(PCM *m, bool enable_pmm, bool enable_verbose, int delay_ms, Ma
 
 void print_usage()
 {
-    cerr << "\nUsage: \n";
-    cerr << " -h | --help | /h          => print this help and exit\n";
-    cerr << " --PMM | -pmm              => to enable PMM (Default DDR uncore latency)\n";
-    cerr << " -i[=number] | /i[=number] => allow to determine number of iterations\n";
-    cerr << " -v | --verbose            => verbose Output\n";
-    cerr << "\n";
+    cout << "\nUsage: \n";
+    cout << " -h | --help | /h          => print this help and exit\n";
+    cout << " --PMM | -pmm              => to enable PMM (Default DDR uncore latency)\n";
+    cout << " -i[=number] | /i[=number] => allow to determine number of iterations\n";
+    cout << " -silent                   => silence information output and print only measurements\n";
+    cout << " --version                 => print application version\n";
+    cout << " -v | --verbose            => verbose Output\n";
+    cout << "\n";
 }
 
-int main(int argc, char * argv[])
-{
+PCM_MAIN_NOTHROW;
+
+int mainThrows(int argc, char * argv[])
+{   
+
+    if(print_version(argc, argv))
+        exit(EXIT_SUCCESS);
+
+    null_stream nullStream;
+    check_and_set_silent(argc, argv, nullStream);
+    
     set_signal_handlers();
-    std::cout << "\n Processor Counter Monitor " << PCM_VERSION << "\n";
+
+    std::cout << "\n Intel(r) Performance Counter Monitor " << PCM_VERSION << "\n";
     std::cout << "\n This utility measures Latency information\n\n";
     bool enable_pmm = false;
     bool enable_verbose = false;
@@ -482,31 +484,27 @@ int main(int argc, char * argv[])
         argv++;
         argc--;
 
-        if (strncmp(*argv, "--help", 6) == 0 ||
-                                strncmp(*argv, "-h", 2) == 0 ||
-                                strncmp(*argv, "/h", 2) == 0)
+        if (check_argument_equals(*argv, {"--help", "-h", "/h"}))
         {
             print_usage();
             exit(EXIT_FAILURE);
+        }
+        else if (check_argument_equals(*argv, {"-silent", "/silent"}))
+        {
+            // handled in check_and_set_silent
+            continue;
         }
         else if (mainLoop.parseArg(*argv))
         {
             continue;
         }
-        else if (strncmp(*argv, "--PMM",6) == 0 || strncmp(*argv, "-pmm", 5) == 0)
+        else if (check_argument_equals(*argv, {"--PMM", "-pmm"}))
         {
-            argv++;
-            argc--;
             enable_pmm = true;
             continue;
         }
-
-        else if (strncmp(*argv, "--verbose", 9) == 0 ||
-                             strncmp(*argv, "-v", 2) == 0 ||
-                             strncmp(*argv, "/v", 2) == 0)
+        else if (check_argument_equals(*argv, {"--verbose", "-v", "/v"}))
         {
-            argv++;
-            argc--;
             enable_verbose = true;
             continue;
         }

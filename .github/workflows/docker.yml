@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - name: Get current time
         uses: 1466587594/get-current-time@v2
@@ -16,7 +16,9 @@ jobs:
           format: YYYY-MM-DD--HH
 
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v1
@@ -51,7 +53,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
+            ghcr.io/intel/pcm:latest
             opcm/pcm:latest
-            ghcr.io/opcm/pcm:latest
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache

@@ -1,18 +1,9 @@
-/*
-Copyright (c) 2017-2018, Intel Corporation
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of Intel Corporation nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2017-2022, Intel Corporation
 
 // written by Patrick Lu,
 //            Aaron Cruz
+//            and others
 #include "cpucounters.h"
 #ifdef _MSC_VER
 #pragma warning(disable : 4996) // for sprintf
@@ -82,6 +73,15 @@ static const std::string icx_iio_stack_names[6] = {
     "IIO Stack 5 - CBDMA/DMI      "
 };
 
+static const std::string icx_d_iio_stack_names[6] = {
+    "IIO Stack 0 - MCP            ",
+    "IIO Stack 1 - PCIe0          ",
+    "IIO Stack 2 - CBDMA/DMI      ",
+    "IIO Stack 3 - PCIe2          ",
+    "IIO Stack 4 - PCIe3          ",
+    "IIO Stack 5 - PCIe1          "
+};
+
 static const std::string snr_iio_stack_names[5] = {
     "IIO Stack 0 - QAT            ",
     "IIO Stack 1 - CBDMA/DMI      ",
@@ -111,6 +111,15 @@ static const std::map<int, int> icx_sad_to_pmu_id_mapping = {
     { 5,                    4 }
 };
 
+static const std::map<int, int> icx_d_sad_to_pmu_id_mapping = {
+    { ICX_CBDMA_DMI_SAD_ID, 2 },
+    { 1,                    5 },
+    { 2,                    1 },
+    { ICX_MCP_SAD_ID,       0 },
+    { 4,                    3 },
+    { 5,                    4 }
+};
+
 #define SNR_ACCELERATOR_PART_ID 4
 
 #define SNR_ROOT_PORT_A_DID 0x334A
@@ -129,74 +138,68 @@ static const std::map<int, int> snr_sad_to_pmu_id_mapping = {
     { SNR_QAT_SAD_ID      , 0 }
 };
 
-map<string,PCM::PerfmonField> opcodeFieldMap;
-//TODO: add description for this nameMap
-map<string,std::pair<h_id,std::map<string,v_id>>> nameMap;
-//TODO: remove binding to stacks amount
-result_content results(max_sockets, stack_content(6, ctr_data()));
+#define HQMV2_DID   0x2710 // Hardware Queue Manager v2
+#define DSA_DID     0x0b25 // Data Streaming Accelerator (DSA)
+#define IAX_DID     0x0cfe // In-Memory Database Analytics Accelerator (IAX)
+#define QATV2_DID   0x4940 // QuickAssist (CPM) v2
 
-struct data{
-    uint32_t width;
-    uint64_t value;
+#define SPR_DMI_PART_ID                7
+#define SPR_SAD_CONTROL_CFG_OFFSET     SNR_ICX_SAD_CONTROL_CFG_OFFSET
+
+#define SPR_DMI_PMON_ID         1
+#define SPR_PCIE_GEN5_0_PMON_ID 2
+#define SPR_PCIE_GEN5_1_PMON_ID 4
+#define SPR_PCIE_GEN5_2_PMON_ID 6
+#define SPR_PCIE_GEN5_3_PMON_ID 7
+#define SPR_PCIE_GEN5_4_PMON_ID 9
+#define SPR_IDX0_PMON_ID        0
+#define SPR_IDX1_PMON_ID        3
+#define SPR_IDX2_PMON_ID        5
+#define SPR_IDX3_PMON_ID        8
+
+const std::map<int, int> spr_sad_to_pmu_id_mapping = {
+    { 0,  SPR_DMI_PMON_ID         },
+    { 1,  SPR_PCIE_GEN5_0_PMON_ID },
+    { 2,  SPR_PCIE_GEN5_1_PMON_ID },
+    { 3,  SPR_PCIE_GEN5_2_PMON_ID },
+    { 4,  SPR_PCIE_GEN5_3_PMON_ID },
+    { 5,  SPR_PCIE_GEN5_4_PMON_ID },
+    { 8,  SPR_IDX0_PMON_ID        },
+    { 9,  SPR_IDX1_PMON_ID        },
+    { 10, SPR_IDX2_PMON_ID        },
+    { 11, SPR_IDX3_PMON_ID        }
 };
 
-/**
- * For debug only
- */
-void print_nameMap() {
-    for (std::map<string,std::pair<h_id,std::map<string,v_id>>>::const_iterator iunit = nameMap.begin(); iunit != nameMap.end(); ++iunit)
-    {
-        string h_name = iunit->first;
-        std::pair<h_id,std::map<string,v_id>> value = iunit->second;
-        uint32_t hid = value.first;
-        std::map<string,v_id> vMap = value.second;
-        cout << "H name: " << h_name << " id =" << hid << " vMap size:" << vMap.size() << "\n";
-        for (std::map<string,v_id>::const_iterator junit = vMap.begin(); junit != vMap.end(); ++junit)
-        {
-            string v_name = junit->first;
-            uint32_t vid = junit->second;
-            cout << "V name: " << v_name << " id =" << vid << "\n";
+static const std::string spr_iio_stack_names[] = {
+    "IIO Stack 0 - IDX0  ",
+    "IIO Stack 1 - DMI   ",
+    "IIO Stack 2 - PCIe0 ",
+    "IIO Stack 3 - IDX1  ",
+    "IIO Stack 4 - PCIe1 ",
+    "IIO Stack 5 - IDX2  ",
+    "IIO Stack 6 - PCIe2 ",
+    "IIO Stack 7  - PCIe3",
+    "IIO Stack 8  - IDX3 ",
+    "IIO Stack 9  - PCIe4",
+    "IIO Stack 10 - NONE ",
+    "IIO Stack 11 - NONE ",
+};
 
-        }
-    }
-}
+struct iio_counter : public counter {
+  std::vector<result_content> data;
+};
 
+//TODO: remove binding to stacks amount
+result_content results(max_sockets, stack_content(12, ctr_data()));
 
-string a_title (const string &init, const string &name) {
-    char begin = init[0];
-    string row = init;
-    row += name;
-    return row + begin;
-}
-
-string a_data (string init, struct data d) {
-    char begin = init[0];
-    string row = init;
-    string str_d = unit_format(d.value);
-    row += str_d;
-    if (str_d.size() > d.width)
-        throw std::length_error("counter value > event_name length");
-    row += string(d.width - str_d.size(), ' ');
-    return row + begin;
-}
-
-string build_line(string init, string name, bool last_char = true, char this_char = '_')
+typedef struct
 {
-    char begin = init[0];
-    string row = init;
-    row += string(name.size(), this_char);
-    if (last_char == true)
-        row += begin;
-    return row;
-}
+    PCM *m;
+    iio_counter ctr;
+    vector<struct iio_counter> ctrs;
+} iio_evt_parse_context;
 
-
-string a_header_footer (string init, string name)
-{
-    return build_line(init, name);
-}
-
-vector<string> combine_stack_name_and_counter_names(string stack_name)
+vector<string> combine_stack_name_and_counter_names(string stack_name, const map<string,std::pair<h_id,std::map<string,v_id>>> &nameMap)
 {
 
     vector<string> v;
@@ -215,30 +218,15 @@ vector<string> combine_stack_name_and_counter_names(string stack_name)
     return v;
 }
 
-vector<struct data> prepare_data(const vector<uint64_t> &values, const vector<string> &headers)
-{
-    vector<struct data> v;
-    uint32_t idx = 0;
-    for (std::vector<string>::const_iterator iunit = std::next(headers.begin()); iunit != headers.end() && idx < values.size(); ++iunit, idx++)
-    {
-        struct data d;
-        d.width = (uint32_t)iunit->size();
-        d.value = values[idx];
-        v.push_back(d);
-    }
-
-    return v;
-}
-
-string build_pci_header(const PCIDB & pciDB, uint32_t column_width, struct pci p, int part = -1, uint32_t level = 0)
+string build_pci_header(const PCIDB & pciDB, uint32_t column_width, const struct pci &p, int part = -1, uint32_t level = 0)
 {
     string s = "|";
-    char bdf_buf[10];
+    char bdf_buf[32];
     char speed_buf[10];
     char vid_did_buf[10];
     char device_name_buf[128];
 
-    snprintf(bdf_buf, sizeof(bdf_buf), "%02X:%02X.%1d", p.bdf.busno, p.bdf.devno, p.bdf.funcno);
+    snprintf(bdf_buf, sizeof(bdf_buf), "%04X:%02X:%02X.%1d", p.bdf.domainno, p.bdf.busno, p.bdf.devno, p.bdf.funcno);
     snprintf(speed_buf, sizeof(speed_buf), "Gen%1d x%-2d", p.link_speed, p.link_width);
     snprintf(vid_did_buf, sizeof(vid_did_buf), "%04X:%04X", p.vendor_id, p.device_id);
     snprintf(device_name_buf, sizeof(device_name_buf), "%s %s",
@@ -253,6 +241,14 @@ string build_pci_header(const PCIDB & pciDB, uint32_t column_width, struct pci p
     s += " ";
     s += device_name_buf;
 
+    if (!p.parts_no.empty()) {
+        s += "; Part: ";
+        for (auto& part : p.parts_no) {
+            s += std::to_string(part) + ", ";
+        }
+        s += "\b\b ";
+    }
+
     /* row with data */
     if (part >= 0) {
         s.insert(1,"P" + std::to_string(part) + " ");
@@ -265,7 +261,19 @@ string build_pci_header(const PCIDB & pciDB, uint32_t column_width, struct pci p
     return s;
 }
 
-vector<string> build_display(vector<struct iio_stacks_on_socket>& iios, vector<struct counter>& ctrs, const PCIDB& pciDB)
+void build_pci_tree(vector<string> &buffer, const PCIDB & pciDB, uint32_t column_width, const struct pci &p, int part, uint32_t level = 0)
+{
+    string row;
+    for (const auto& child : p.child_pci_devs) {
+        row = build_pci_header(pciDB, column_width, child, part, level);
+        buffer.push_back(row);
+        if (child.hasChildDevices())
+            build_pci_tree(buffer, pciDB, column_width, child, part, level + 1);
+    }
+}
+
+vector<string> build_display(vector<struct iio_stacks_on_socket>& iios, vector<struct iio_counter>& ctrs, const PCIDB& pciDB,
+                             const map<string,std::pair<h_id,std::map<string,v_id>>> &nameMap)
 {
     vector<string> buffer;
     vector<string> headers;
@@ -276,7 +284,7 @@ vector<string> build_display(vector<struct iio_stacks_on_socket>& iios, vector<s
         buffer.push_back("Socket" + std::to_string(socket->socket_id));
         for (auto stack = socket->stacks.cbegin(); stack != socket->stacks.cend(); ++stack) {
             auto stack_id = stack->iio_unit_id;
-            headers = combine_stack_name_and_counter_names(stack->stack_name);
+            headers = combine_stack_name_and_counter_names(stack->stack_name, nameMap);
             //Print first row
             row = std::accumulate(headers.begin(), headers.end(), string(" "), a_header_footer);
             header_width = row.size();
@@ -288,24 +296,24 @@ vector<string> build_display(vector<struct iio_stacks_on_socket>& iios, vector<s
             row = std::accumulate(headers.begin(), headers.end(), string("|"), a_header_footer);
             buffer.push_back(row);
             //Print data
-            std::map<uint32_t,map<uint32_t,struct counter*>> v_sort;
+            std::map<uint32_t,map<uint32_t,struct iio_counter*>> v_sort;
             //re-organize data collection to be row wise
-            for (std::vector<struct counter>::iterator counter = ctrs.begin(); counter != ctrs.end(); ++counter) {
+            for (std::vector<struct iio_counter>::iterator counter = ctrs.begin(); counter != ctrs.end(); ++counter) {
                 v_sort[counter->v_id][counter->h_id] = &(*counter);
             }
-            for (std::map<uint32_t,map<uint32_t,struct counter*>>::const_iterator vunit = v_sort.cbegin(); vunit != v_sort.cend(); ++vunit) {
-                map<uint32_t, struct counter*> h_array = vunit->second;
+            for (std::map<uint32_t,map<uint32_t,struct iio_counter*>>::const_iterator vunit = v_sort.cbegin(); vunit != v_sort.cend(); ++vunit) {
+                map<uint32_t, struct iio_counter*> h_array = vunit->second;
                 uint32_t vv_id = vunit->first;
                 vector<uint64_t> h_data;
                 string v_name = h_array[0]->v_event_name;
-                for (map<uint32_t,struct counter*>::const_iterator hunit = h_array.cbegin(); hunit != h_array.cend(); ++hunit) {
+                for (map<uint32_t,struct iio_counter*>::const_iterator hunit = h_array.cbegin(); hunit != h_array.cend(); ++hunit) {
                     uint32_t hh_id = hunit->first;
                     uint64_t raw_data = hunit->second->data[0][socket->socket_id][stack_id][std::pair<h_id,v_id>(hh_id,vv_id)];
                     h_data.push_back(raw_data);
                 }
                 data = prepare_data(h_data, headers);
                 row = "| " + v_name;
-                row += string(headers[0].size() - (row.size() - 1), ' ');
+                row += string(abs(int(headers[0].size() - (row.size() - 1))), ' ');
                 row += std::accumulate(data.begin(), data.end(), string("|"), a_data);
                 buffer.push_back(row);
             }
@@ -318,8 +326,11 @@ vector<string> build_display(vector<struct iio_stacks_on_socket>& iios, vector<s
                 for (const auto& pci_device : part.child_pci_devs) {
                     row = build_pci_header(pciDB, (uint32_t)header_width, pci_device, -1, level);
                     buffer.push_back(row);
-                    if (pci_device.header_type == 1)
-                        level += 1;
+                    if (pci_device.hasChildDevices()) {
+                        build_pci_tree(buffer, pciDB, (uint32_t)header_width, pci_device, -1, level + 1);
+                    } else if (pci_device.header_type == 1) {
+                            level++;
+                    }
                 }
             }
             //Print footer
@@ -330,26 +341,45 @@ vector<string> build_display(vector<struct iio_stacks_on_socket>& iios, vector<s
     return buffer;
 }
 
-std::string build_csv_row(const std::vector<std::string>& chunks, const std::string& delimiter)
+std::string get_root_port_dev(const bool show_root_port, int part_id,  const pcm::iio_stack *stack)
 {
-    return std::accumulate(chunks.begin(), chunks.end(), std::string(""),
-                           [delimiter](const string &left, const string &right){
-                               return left.empty() ? right : left + delimiter + right;
-                           });
+    char tmp[9] = "        ";
+    std::string rp_pci;
+
+    if (!show_root_port)
+        return rp_pci;
+
+    for (auto part = stack->parts.begin(); part != stack->parts.end(); part = std::next(part))
+    {
+        if (part->part_id == part_id)
+        {
+            std::snprintf(tmp, sizeof(tmp), "%02x:%02x.%x", part->root_pci_dev.bdf.busno,
+                        part->root_pci_dev.bdf.devno, part->root_pci_dev.bdf.funcno);
+            break;
+        }
+    }
+
+    rp_pci.append(tmp);
+    return rp_pci;
+
 }
 
-vector<string> build_csv(vector<struct iio_stacks_on_socket>& iios, vector<struct counter>& ctrs,
-    const bool human_readable, const std::string& csv_delimiter)
+vector<string> build_csv(vector<struct iio_stacks_on_socket>& iios, vector<struct iio_counter>& ctrs,
+                         const bool human_readable, const bool show_root_port, const std::string& csv_delimiter,
+                         const map<string,std::pair<h_id,std::map<string,v_id>>> &nameMap)
 {
     vector<string> result;
     vector<string> current_row;
-    auto header = combine_stack_name_and_counter_names("Name");
+    auto header = combine_stack_name_and_counter_names("Part", nameMap);
+    header.insert(header.begin(), "Name");
+    if (show_root_port)
+        header.insert(header.begin(), "Root Port");
     header.insert(header.begin(), "Socket");
     result.push_back(build_csv_row(header, csv_delimiter));
-    std::map<uint32_t,map<uint32_t,struct counter*>> v_sort;
+    std::map<uint32_t,map<uint32_t,struct iio_counter*>> v_sort;
     //re-organize data collection to be row wise
     size_t max_name_width = 0;
-    for (std::vector<struct counter>::iterator counter = ctrs.begin(); counter != ctrs.end(); ++counter) {
+    for (std::vector<struct iio_counter>::iterator counter = ctrs.begin(); counter != ctrs.end(); ++counter) {
         v_sort[counter->v_id][counter->h_id] = &(*counter);
         max_name_width = (std::max)(max_name_width, counter->v_event_name.size());
     }
@@ -365,8 +395,11 @@ vector<string> build_csv(vector<struct iio_stacks_on_socket>& iios, vector<struc
 
             const uint32_t stack_id = stack->iio_unit_id;
             //Print data
-            for (std::map<uint32_t,map<uint32_t,struct counter*>>::const_iterator vunit = v_sort.cbegin(); vunit != v_sort.cend(); ++vunit) {
-                map<uint32_t, struct counter*> h_array = vunit->second;
+            int part_id;
+            std::map<uint32_t,map<uint32_t,struct iio_counter*>>::const_iterator vunit;
+            for (vunit = v_sort.cbegin(), part_id = 0;
+                     vunit != v_sort.cend(); ++vunit, ++part_id) {
+                map<uint32_t, struct iio_counter*> h_array = vunit->second;
                 uint32_t vv_id = vunit->first;
                 vector<uint64_t> h_data;
                 string v_name = h_array[0]->v_event_name;
@@ -376,9 +409,13 @@ vector<string> build_csv(vector<struct iio_stacks_on_socket>& iios, vector<struc
 
                 current_row.clear();
                 current_row.push_back(socket_name);
+                if (show_root_port) {
+                    auto pci_dev = get_root_port_dev(show_root_port, part_id, &(*stack));
+                    current_row.push_back(pci_dev);
+                }
                 current_row.push_back(stack_name);
                 current_row.push_back(v_name);
-                for (map<uint32_t,struct counter*>::const_iterator hunit = h_array.cbegin(); hunit != h_array.cend(); ++hunit) {
+                for (map<uint32_t,struct iio_counter*>::const_iterator hunit = h_array.cbegin(); hunit != h_array.cend(); ++hunit) {
                     uint32_t hh_id = hunit->first;
                     uint64_t raw_data = hunit->second->data[0][socket->socket_id][stack_id][std::pair<h_id,v_id>(hh_id,vv_id)];
                     current_row.push_back(human_readable ? unit_format(raw_data) : std::to_string(raw_data));
@@ -390,19 +427,18 @@ vector<string> build_csv(vector<struct iio_stacks_on_socket>& iios, vector<struc
     return result;
 }
 
-void display(const vector<string> &buff, std::ostream& stream)
-{
-    for (std::vector<string>::const_iterator iunit = buff.begin(); iunit != buff.end(); ++iunit)
-        stream << *iunit << "\n";
-    stream << std::flush;
-}
-
 class IPlatformMapping {
 private:
+    uint32_t m_sockets;
+protected:
+    void probeDeviceRange(std::vector<struct pci> &child_pci_devs, int domain, int secondary, int subordinate);
 public:
+    IPlatformMapping(uint32_t sockets_count) : m_sockets(sockets_count) {}
     virtual ~IPlatformMapping() {};
-    static IPlatformMapping* getPlatformMapping(int cpu_model);
-    virtual bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios, uint32_t sockets_count) = 0;
+    static std::unique_ptr<IPlatformMapping> getPlatformMapping(int cpu_model, uint32_t sockets_count);
+    virtual bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) = 0;
+
+    uint32_t socketsCount() const { return m_sockets; }
 };
 
 // Mapping for SkyLake Server.
@@ -410,9 +446,9 @@ class PurleyPlatformMapping: public IPlatformMapping {
 private:
     void getUboxBusNumbers(std::vector<uint32_t>& ubox);
 public:
-    PurleyPlatformMapping() = default;
+    PurleyPlatformMapping(uint32_t sockets_count) : IPlatformMapping(sockets_count) {}
     ~PurleyPlatformMapping() = default;
-    bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios, uint32_t sockets_count) override;
+    bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) override;
 };
 
 void PurleyPlatformMapping::getUboxBusNumbers(std::vector<uint32_t>& ubox)
@@ -434,7 +470,7 @@ void PurleyPlatformMapping::getUboxBusNumbers(std::vector<uint32_t>& ubox)
     }
 }
 
-bool PurleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios, uint32_t sockets_count)
+bool PurleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios)
 {
     std::vector<uint32_t> ubox;
     getUboxBusNumbers(ubox);
@@ -443,7 +479,7 @@ bool PurleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_soc
         return false;
     }
 
-    for (uint32_t socket_id = 0; socket_id < sockets_count; socket_id++) {
+    for (uint32_t socket_id = 0; socket_id < socketsCount(); socket_id++) {
         if (!PciHandleType::exists(0, ubox[socket_id], SKX_UBOX_DEVICE_NUM, SKX_UBOX_FUNCTION_NUM)) {
             cerr << "No access to PCICFG\n" << endl;
             return false;
@@ -502,6 +538,8 @@ bool PurleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_soc
 class IPlatformMapping10Nm: public IPlatformMapping {
 private:
 public:
+    IPlatformMapping10Nm(uint32_t sockets_count) : IPlatformMapping(sockets_count) {}
+    ~IPlatformMapping10Nm() = default;
     bool getSadIdRootBusMap(uint32_t socket_id, std::map<uint8_t, uint8_t>& sad_id_bus_map);
 };
 
@@ -545,15 +583,23 @@ bool IPlatformMapping10Nm::getSadIdRootBusMap(uint32_t socket_id, std::map<uint8
 // Mapping for IceLake Server.
 class WhitleyPlatformMapping: public IPlatformMapping10Nm {
 private:
+    const bool icx_d;
+    const std::map<int, int>& sad_to_pmu_id_mapping;
+    const std::string * iio_stack_names;
 public:
-    WhitleyPlatformMapping() = default;
+    WhitleyPlatformMapping(uint32_t sockets_count) : IPlatformMapping10Nm(sockets_count),
+        icx_d(PCM::getInstance()->getCPUModelFromCPUID() == PCM::ICX_D),
+        sad_to_pmu_id_mapping(icx_d ? icx_d_sad_to_pmu_id_mapping : icx_sad_to_pmu_id_mapping),
+        iio_stack_names(icx_d ? icx_d_iio_stack_names : icx_iio_stack_names)
+    {
+    }
     ~WhitleyPlatformMapping() = default;
-    bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios, uint32_t sockets_count) override;
+    bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) override;
 };
 
-bool WhitleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios, uint32_t sockets_count)
+bool WhitleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios)
 {
-    for (uint32_t socket = 0; socket < sockets_count; socket++) {
+    for (uint32_t socket = 0; socket < socketsCount(); socket++) {
         struct iio_stacks_on_socket iio_on_socket;
         iio_on_socket.socket_id = socket;
         std::map<uint8_t, uint8_t> sad_id_bus_map;
@@ -563,15 +609,15 @@ bool WhitleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_so
 
         {
             struct iio_stack stack;
-            stack.iio_unit_id = icx_sad_to_pmu_id_mapping.at(ICX_MCP_SAD_ID);
-            stack.stack_name = icx_iio_stack_names[stack.iio_unit_id];
+            stack.iio_unit_id = sad_to_pmu_id_mapping.at(ICX_MCP_SAD_ID);
+            stack.stack_name = iio_stack_names[stack.iio_unit_id];
             iio_on_socket.stacks.push_back(stack);
         }
 
         for (auto sad_id_bus_pair = sad_id_bus_map.cbegin(); sad_id_bus_pair != sad_id_bus_map.cend(); ++sad_id_bus_pair) {
             int sad_id = sad_id_bus_pair->first;
-            if (icx_sad_to_pmu_id_mapping.find(sad_id) ==
-                icx_sad_to_pmu_id_mapping.end()) {
+            if (sad_to_pmu_id_mapping.find(sad_id) ==
+                sad_to_pmu_id_mapping.end()) {
                 cerr << "Unknown SAD ID: " << sad_id << endl;
                 return false;
             }
@@ -584,9 +630,9 @@ bool WhitleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_so
             int root_bus = sad_id_bus_pair->second;
             if (sad_id == ICX_CBDMA_DMI_SAD_ID) {
                 // There is one DMA Controller on each socket
-                stack.iio_unit_id = icx_sad_to_pmu_id_mapping.at(sad_id);
+                stack.iio_unit_id = sad_to_pmu_id_mapping.at(sad_id);
                 stack.busno = root_bus;
-                stack.stack_name = icx_iio_stack_names[stack.iio_unit_id];
+                stack.stack_name = iio_stack_names[stack.iio_unit_id];
 
                 // PCH is on socket 0 only
                 if (socket == 0) {
@@ -629,8 +675,8 @@ bool WhitleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_so
                 continue;
             }
             stack.busno = root_bus;
-            stack.iio_unit_id = icx_sad_to_pmu_id_mapping.at(sad_id);
-            stack.stack_name = icx_iio_stack_names[stack.iio_unit_id];
+            stack.iio_unit_id = sad_to_pmu_id_mapping.at(sad_id);
+            stack.stack_name = iio_stack_names[stack.iio_unit_id];
             for (int slot = 2; slot < 6; slot++) {
                 struct pci pci;
                 pci.bdf.busno = root_bus;
@@ -670,9 +716,9 @@ bool WhitleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_so
 class JacobsvillePlatformMapping: public IPlatformMapping10Nm {
 private:
 public:
-    JacobsvillePlatformMapping() = default;
+    JacobsvillePlatformMapping(uint32_t sockets_count) : IPlatformMapping10Nm(sockets_count) {}
     ~JacobsvillePlatformMapping() = default;
-    bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios, uint32_t sockets_count) override;
+    bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) override;
     bool JacobsvilleAccelerators(const std::pair<uint8_t, uint8_t>& sad_id_bus_pair, struct iio_stack& stack);
 };
 
@@ -718,10 +764,9 @@ bool JacobsvillePlatformMapping::JacobsvilleAccelerators(const std::pair<uint8_t
     return false;
 }
 
-bool JacobsvillePlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios, uint32_t sockets_count)
+bool JacobsvillePlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios)
 {
     std::map<uint8_t, uint8_t> sad_id_bus_map;
-    PCM_UNUSED(sockets_count);
     if (!getSadIdRootBusMap(0, sad_id_bus_map)) {
         return false;
     }
@@ -833,27 +878,270 @@ bool JacobsvillePlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_o
     return true;
 }
 
-IPlatformMapping* IPlatformMapping::getPlatformMapping(int cpu_model)
+class EagleStreamPlatformMapping: public IPlatformMapping
 {
-    switch (cpu_model) {
-    case PCM::SKX:
-        return new PurleyPlatformMapping();
-    case PCM::ICX:
-        return new WhitleyPlatformMapping();
-    case PCM::SNOWRIDGE:
-        return new JacobsvillePlatformMapping();
-    default:
-        return nullptr;
+private:
+    bool getRootBuses(std::map<int, std::map<int, struct bdf>> &root_buses);
+    bool stackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket);
+    bool eagleStreamDmiStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket);
+    bool eagleStreamPciStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket);
+    bool eagleStreamAcceleratorStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket);
+public:
+    EagleStreamPlatformMapping(uint32_t sockets_count) : IPlatformMapping(sockets_count) {}
+    ~EagleStreamPlatformMapping() = default;
+
+    bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) override;
+};
+
+bool EagleStreamPlatformMapping::getRootBuses(std::map<int, std::map<int, struct bdf>> &root_buses)
+{
+    bool mapped = true;
+    for (uint32_t domain = 0; mapped; domain++) {
+        mapped = false;
+        for (uint16_t b = 0; b < 256; b++) {
+            for (uint8_t d = 0; d < 32; d++) {
+                for (uint8_t f = 0; f < 8; f++) {
+                    struct pci pci_dev(domain, b, d, f);
+                    if (!probe_pci(&pci_dev)) {
+                        break;
+                    }
+                    if (!((pci_dev.vendor_id == PCM_INTEL_PCI_VENDOR_ID) && (pci_dev.device_id == SPR_MSM_DEV_ID))) {
+                        continue;
+                    }
+
+                    std::uint32_t cpuBusValid;
+                    std::vector<std::uint32_t> cpuBusNo;
+                    int package_id;
+
+                    if (get_cpu_bus(domain, b, d, f, cpuBusValid, cpuBusNo, package_id) == false)
+                    {
+                        return false;
+                    }
+
+                    for (int cpuBusId = 0; cpuBusId < SPR_MSM_CPUBUSNO_MAX; ++cpuBusId) {
+                        if (!((cpuBusValid >> cpuBusId) & 0x1))
+                        {
+                            cout << "CPU bus " << cpuBusId << " is disabled on package " << package_id << endl;
+                            continue;
+                        }
+                        if (spr_sad_to_pmu_id_mapping.find(cpuBusId) == spr_sad_to_pmu_id_mapping.end())
+                        {
+                            cerr << "Cannot map CPU bus " << cpuBusId << " to IO PMU ID" << endl;
+                            continue;
+                        }
+                        int pmuId = spr_sad_to_pmu_id_mapping.at(cpuBusId);
+                        int rootBus = (cpuBusNo[(int)(cpuBusId / 4)] >> ((cpuBusId % 4) * 8)) & 0xff;
+                        root_buses[package_id][pmuId] = bdf(domain, rootBus, 0, 0);
+                        cout << "Mapped CPU bus #" << cpuBusId << " (domain " << domain << " bus " << std::hex << rootBus << std::dec << ") to IO PMU #"
+                             << pmuId << " package " << package_id << endl;
+                        mapped = true;
+                    }
+                }
+            }
+        }
+    }
+    return !root_buses.empty();
+}
+
+bool EagleStreamPlatformMapping::eagleStreamDmiStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket)
+{
+    struct iio_stack stack;
+    stack.iio_unit_id = unit;
+    stack.stack_name = spr_iio_stack_names[unit];
+    stack.busno = address.busno;
+    stack.domain = address.domainno;
+    struct iio_bifurcated_part pch_part;
+    struct pci *pci = &pch_part.root_pci_dev;
+    pch_part.part_id = SPR_DMI_PART_ID;
+    pci->bdf = address;
+    if (!probe_pci(pci)) {
+        cerr << "Failed to probe DMI Stack: address: " << std::setw(4) << std::setfill('0') << std::hex << address.domainno <<
+                                                          std::setw(2) << std::setfill('0') << ":" << address.busno << ":" << address.devno <<
+                                                          "." << address.funcno << std::dec << endl;
+        return false;
+    }
+
+    /* Scan devices behind PCH port only */
+    if (!iio_on_socket.socket_id)
+        probeDeviceRange(pch_part.child_pci_devs, pci->bdf.domainno, pci->secondary_bus_number, pci->subordinate_bus_number);
+
+    pci->parts_no.push_back(SPR_DMI_PART_ID);
+
+    stack.parts.push_back(pch_part);
+    iio_on_socket.stacks.push_back(stack);
+    return true;
+}
+
+bool EagleStreamPlatformMapping::eagleStreamPciStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket)
+{
+    /*
+     * Stacks that manage PCIe 4.0 (device 2,4,6,8) and 5.0 (device 1,3,5,7) Root Ports.
+     */
+    struct iio_stack stack;
+    stack.domain = address.domainno;
+    stack.busno = address.busno;
+    stack.iio_unit_id = unit;
+    stack.stack_name = spr_iio_stack_names[unit];
+    for (int slot = 1; slot < 9; ++slot)
+    {
+        // Check if port is enabled
+        struct pci root_pci_dev;
+        root_pci_dev.bdf = bdf(address.domainno, address.busno, slot, 0x0);
+        if (probe_pci(&root_pci_dev))
+        {
+            struct iio_bifurcated_part part;
+            // Bifurcated Root Ports to channel mapping on SPR
+            part.part_id = slot - 1;
+            part.root_pci_dev = root_pci_dev;
+            for (uint8_t b = root_pci_dev.secondary_bus_number; b <= root_pci_dev.subordinate_bus_number; ++b) {
+                for (uint8_t d = 0; d < 32; ++d) {
+                    for (uint8_t f = 0; f < 8; ++f) {
+                        struct pci child_pci_dev(address.domainno, b, d, f);
+                        if (probe_pci(&child_pci_dev)) {
+                            child_pci_dev.parts_no.push_back(part.part_id);
+                            part.child_pci_devs.push_back(child_pci_dev);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    iio_on_socket.stacks.push_back(stack);
+    return true;
+}
+
+bool EagleStreamPlatformMapping::eagleStreamAcceleratorStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket)
+{
+    struct iio_stack stack;
+    stack.iio_unit_id = unit;
+    stack.domain = address.domainno;
+    stack.busno = address.busno;
+
+    // Channel mappings are checked on B0 stepping
+    auto rb = address.busno;
+    const std::vector<int> acceleratorBuses{ rb, rb + 1, rb + 2, rb + 3 };
+    stack.stack_name = spr_iio_stack_names[unit];
+    for (auto& b : acceleratorBuses) {
+        for (auto d = 0; d < 32; ++d) {
+            for (auto f = 0; f < 8; ++f) {
+                struct iio_bifurcated_part part;
+                struct pci pci_dev(address.domainno, b, d, f);
+
+                if (probe_pci(&pci_dev)) {
+                    if (pci_dev.vendor_id == PCM_INTEL_PCI_VENDOR_ID) {
+                        switch (pci_dev.device_id) {
+                        case DSA_DID:
+                            pci_dev.parts_no.push_back(0);
+                            pci_dev.parts_no.push_back(1);
+                            pci_dev.parts_no.push_back(2);
+                            break;
+                        case IAX_DID:
+                            pci_dev.parts_no.push_back(0);
+                            pci_dev.parts_no.push_back(1);
+                            pci_dev.parts_no.push_back(2);
+                            break;
+                        case HQMV2_DID:
+                            pci_dev.parts_no.push_back(5);
+                            break;
+                        case QATV2_DID:
+                            pci_dev.parts_no.push_back(4);
+                            break;
+                        default:
+                            continue;
+                        }
+                        part.child_pci_devs.push_back(pci_dev);
+                    }
+                    stack.parts.push_back(part);
+                }
+            }
+        }
+    }
+
+    iio_on_socket.stacks.push_back(stack);
+    return true;
+}
+
+bool EagleStreamPlatformMapping::stackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket)
+{
+    switch (unit)
+    {
+        case SPR_DMI_PMON_ID:
+            return eagleStreamDmiStackProbe(unit, address, iio_on_socket);
+        case SPR_PCIE_GEN5_0_PMON_ID:
+        case SPR_PCIE_GEN5_1_PMON_ID:
+        case SPR_PCIE_GEN5_2_PMON_ID:
+        case SPR_PCIE_GEN5_3_PMON_ID:
+        case SPR_PCIE_GEN5_4_PMON_ID:
+            return eagleStreamPciStackProbe(unit, address, iio_on_socket);
+        case SPR_IDX0_PMON_ID:
+        case SPR_IDX1_PMON_ID:
+        case SPR_IDX2_PMON_ID:
+        case SPR_IDX3_PMON_ID:
+            return eagleStreamAcceleratorStackProbe(unit, address, iio_on_socket);
+        default:
+            return false;
     }
 }
 
-std::string dos2unix(std::string in)
+bool EagleStreamPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios)
 {
-    if (in.length() > 0 && int(in[in.length() - 1]) == 13)
+    std::map<int, std::map<int, struct bdf>> root_buses;
+    if (!getRootBuses(root_buses))
     {
-        in.erase(in.length() - 1);
+        return false;
     }
-    return in;
+
+    for (auto iter = root_buses.cbegin(); iter != root_buses.cend(); ++iter) {
+        auto rbs_on_socket = iter->second;
+        struct iio_stacks_on_socket iio_on_socket;
+        iio_on_socket.socket_id = iter->first;
+        for (auto rb = rbs_on_socket.cbegin(); rb != rbs_on_socket.cend(); ++rb) {
+            if (!stackProbe(rb->first, rb->second, iio_on_socket)) {
+                return false;
+            }
+        }
+        std::sort(iio_on_socket.stacks.begin(), iio_on_socket.stacks.end());
+        iios.push_back(iio_on_socket);
+    }
+
+    return true;
+}
+
+void IPlatformMapping::probeDeviceRange(std::vector<struct pci> &pci_devs, int domain, int secondary, int subordinate)
+{
+    for (uint8_t bus = secondary; bus <= subordinate; bus++) {
+        for (uint8_t device = 0; device < 32; device++) {
+            for (uint8_t function = 0; function < 8; function++) {
+                struct pci child_dev;
+                child_dev.bdf.domainno = domain;
+                child_dev.bdf.busno = bus;
+                child_dev.bdf.devno = device;
+                child_dev.bdf.funcno = function;
+                if (probe_pci(&child_dev)) {
+                    if (secondary < child_dev.secondary_bus_number && subordinate < child_dev.subordinate_bus_number) {
+                        probeDeviceRange(child_dev.child_pci_devs, domain, child_dev.secondary_bus_number, child_dev.subordinate_bus_number);
+                    }
+                    pci_devs.push_back(child_dev);
+                }
+            }
+        }
+    }
+}
+
+std::unique_ptr<IPlatformMapping> IPlatformMapping::getPlatformMapping(int cpu_model, uint32_t sockets_count)
+{
+    switch (cpu_model) {
+    case PCM::SKX:
+        return std::unique_ptr<IPlatformMapping>{new PurleyPlatformMapping(sockets_count)};
+    case PCM::ICX:
+        return std::unique_ptr<IPlatformMapping>{new WhitleyPlatformMapping(sockets_count)};
+    case PCM::SNOWRIDGE:
+        return std::unique_ptr<IPlatformMapping>{new JacobsvillePlatformMapping(sockets_count)};
+    case PCM::SPR:
+        return std::unique_ptr<IPlatformMapping>{new EagleStreamPlatformMapping(sockets_count)};
+    default:
+        return nullptr;
+    }
 }
 
 ccr* get_ccr(PCM* m, uint64_t& ccr)
@@ -864,152 +1152,94 @@ ccr* get_ccr(PCM* m, uint64_t& ccr)
             return new skx_ccr(ccr);
         case PCM::ICX:
         case PCM::SNOWRIDGE:
+        case PCM::SPR:
             return new icx_ccr(ccr);
         default:
-            cerr << "Skylake Server CPU is required for this tool! Program aborted" << endl;
+            cerr << m->getCPUFamilyModelString() << " is not supported! Program aborted" << endl;
             exit(EXIT_FAILURE);
     }
 }
 
-vector<struct counter> load_events(PCM * m, const char* fn)
+int iio_evt_parse_handler(evt_cb_type cb_type, void *cb_ctx, counter &base_ctr, std::map<std::string, uint32_t> &ofm, std::string key, uint64 numValue)
 {
-    vector<struct counter> v;
-    struct counter ctr{};
-    std::unique_ptr<ccr> pccr(get_ccr(m, ctr.ccr));
+    iio_evt_parse_context *context = (iio_evt_parse_context *)cb_ctx;
+    PCM *m = context->m;
 
-    std::ifstream in(fn);
-    std::string line, item;
-
-    if (!in.is_open())
+    if (cb_type == EVT_LINE_START) //this event will be called per line(start)
     {
-        const auto alt_fn = std::string("/usr/share/pcm/") + fn;
-        in.open(alt_fn);
-        if (!in.is_open())
+        context->ctr.ccr = 0;
+    }
+    else if (cb_type == EVT_LINE_FIELD) //this event will be called per field of line
+    {
+        std::unique_ptr<ccr> pccr(get_ccr(m, context->ctr.ccr));
+        switch (ofm[key])
         {
-            const auto err_msg = std::string("event file ") + fn + " or " + alt_fn + " is not available. Copy it from PCM build directory.";
-            throw std::invalid_argument(err_msg);
+            case PCM::OPCODE:
+                break;
+            case PCM::EVENT_SELECT:
+                pccr->set_event_select(numValue);
+                break;
+            case PCM::UMASK:
+                pccr->set_umask(numValue);
+                break;
+            case PCM::RESET:
+                pccr->set_reset(numValue);
+                break;
+            case PCM::EDGE_DET:
+                pccr->set_edge(numValue);
+                break;
+            case PCM::IGNORED:
+                break;
+            case PCM::OVERFLOW_ENABLE:
+                pccr->set_ov_en(numValue);
+                break;
+            case PCM::ENABLE:
+                pccr->set_enable(numValue);
+                break;
+            case PCM::INVERT:
+                pccr->set_invert(numValue);
+                break;
+            case PCM::THRESH:
+                pccr->set_thresh(numValue);
+                break;
+            case PCM::CH_MASK:
+                pccr->set_ch_mask(numValue);
+                break;
+            case PCM::FC_MASK:
+                pccr->set_fc_mask(numValue);
+                break;
+            case PCM::INVALID:
+            default:
+                std::cerr << "Field in -o file not recognized. The key is: " << key << "\n";
+                return -1;
         }
     }
-
-    while (std::getline(in, line)) {
-        /* Ignore anyline with # */
-        //TODO: substring until #, if len == 0, skip, else parse normally
-        pccr->set_ccr_value(0);
-        if (line.find("#") != std::string::npos)
-            continue;
-        /* If line does not have any deliminator, we ignore it as well */
-        if (line.find("=") == std::string::npos)
-            continue;
-        std::istringstream iss(line);
-        string h_name, v_name;
-        while (std::getline(iss, item, ',')) {
-            std::string key, value;
-            uint64 numValue;
-            /* assume the token has the format <key>=<value> */
-            key = item.substr(0,item.find("="));
-            value = item.substr(item.find("=")+1);
-            istringstream iss2(value);
-            iss2 >> setbase(0) >> numValue;
-
-            //cout << "Key:" << key << " Value:" << value << " opcodeFieldMap[key]:" << opcodeFieldMap[key] << "\n";
-            switch(opcodeFieldMap[key]) {
-                case PCM::H_EVENT_NAME:
-                    h_name = dos2unix(value);
-                    ctr.h_event_name = h_name;
-                    if (nameMap.find(h_name) == nameMap.end()) {
-                        /* It's a new horizontal event name */
-                        uint32_t next_h_id = (uint32_t)nameMap.size();
-                        std::pair<h_id,std::map<string,v_id>> nameMap_value(next_h_id, std::map<string,v_id>());
-                        nameMap[h_name] = nameMap_value;
-                    }
-                    ctr.h_id = (uint32_t)nameMap.size() - 1;
-                    break;
-                case PCM::V_EVENT_NAME:
-                    {
-                        v_name = dos2unix(value);
-                        ctr.v_event_name = v_name;
-                        //XXX: If h_name comes after v_name, we'll have a problem.
-                        //XXX: It's very weird, I forgot to assign nameMap[h_name] = nameMap_value earlier (:298), but this part still works?
-                        std::map<string,v_id> &v_nameMap = nameMap[h_name].second;
-                        if (v_nameMap.find(v_name) == v_nameMap.end()) {
-                            v_nameMap[v_name] = (unsigned int)v_nameMap.size() - 1;
-                        } else {
-                            cerr << "Detect duplicated v_name:" << v_name << "\n";
-                            in.close();
-                            exit(EXIT_FAILURE);
-                        }
-                        ctr.v_id = (uint32_t)v_nameMap.size() - 1;
-                        break;
-                    }
-                case PCM::COUNTER_INDEX:
-                    ctr.idx = (int)numValue;
-                    break;
-                case PCM::OPCODE:
-                    break;
-                case PCM::EVENT_SELECT:
-                    pccr->set_event_select(numValue);
-                    break;
-                case PCM::UMASK:
-                    pccr->set_umask(numValue);
-                    break;
-                case PCM::RESET:
-                    pccr->set_reset(numValue);
-                    break;
-                case PCM::EDGE_DET:
-                    pccr->set_edge(numValue);
-                    break;
-                case PCM::IGNORED:
-		    break;
-                case PCM::OVERFLOW_ENABLE:
-                    pccr->set_ov_en(numValue);
-                    break;
-                case PCM::ENABLE:
-                    pccr->set_enable(numValue);
-                    break;
-                case PCM::INVERT:
-                    pccr->set_invert(numValue);
-                    break;
-                case PCM::THRESH:
-                    pccr->set_thresh(numValue);
-                    break;
-                case PCM::CH_MASK:
-                    pccr->set_ch_mask(numValue);
-                    break;
-                case PCM::FC_MASK:
-                    pccr->set_fc_mask(numValue);
-                    break;
-                //TODO: double type for multiplier. drop divider variable
-                case PCM::MULTIPLIER:
-                    ctr.multiplier = (int)numValue;
-                    break;
-                case PCM::DIVIDER:
-                    ctr.divider = (int)numValue;
-                    break;
-                case PCM::INVALID:
-                    cerr << "Field in -o file not recognized. The key is: " << key << "\n";
-                    in.close();
-                    exit(EXIT_FAILURE);
-                    break;
-            }
-        }
-        v.push_back(ctr);
-        //cout << "Finish parsing: " << line << " size:" << v.size() << "\n";
-        cout << line << " " << std::hex << ctr.ccr << std::dec << "\n";
+    else if(cb_type == EVT_LINE_COMPLETE) //this event will be called every line(end)
+    {
+        context->ctr.h_event_name = base_ctr.h_event_name;
+        context->ctr.v_event_name = base_ctr.v_event_name;
+        context->ctr.idx = base_ctr.idx;
+        context->ctr.multiplier = base_ctr.multiplier;
+        context->ctr.divider = base_ctr.divider;
+        context->ctr.h_id = base_ctr.h_id;
+        context->ctr.v_id = base_ctr.v_id;
+        //std::cout << "line parse OK, ctrcfg=0x" << std::hex << context->ctr.ccr << ", h_event_name=" <<  base_ctr.h_event_name << ", v_event_name=" << base_ctr.v_event_name;
+        //std::cout << ", h_id=0x" << std::hex << base_ctr.h_id << ", v_id=0x" << std::hex << base_ctr.v_id;
+        //std::cout << ", idx=0x"<< std::hex << base_ctr.idx << ", multiplier=0x" << std::hex << base_ctr.multiplier << ", divider=0x" << std::hex << base_ctr.divider << std::dec << "\n";
+        context->ctrs.push_back(context->ctr);
     }
-    cout << std::flush;
 
-    in.close();
-
-    return v;
+    return 0;
 }
 
-result_content get_IIO_Samples(PCM *m, const std::vector<struct iio_stacks_on_socket>& iios, struct counter ctr, uint32_t delay_ms)
+result_content get_IIO_Samples(PCM *m, const std::vector<struct iio_stacks_on_socket>& iios, const struct iio_counter & ctr, uint32_t delay_ms)
 {
     IIOCounterState *before, *after;
     uint64 rawEvents[4] = {0};
-    std::unique_ptr<ccr> pccr(get_ccr(m, ctr.ccr));
+    auto ccrCopy = ctr.ccr;
+    std::unique_ptr<ccr> pccr(get_ccr(m, ccrCopy));
     rawEvents[ctr.idx] = pccr->get_ccr_value();
-    int stacks_count = (int)iios[0].stacks.size();
+    const int stacks_count = (int)m->getMaxNumOfIIOStacks();
     before = new IIOCounterState[iios.size() * stacks_count];
     after = new IIOCounterState[iios.size() * stacks_count];
 
@@ -1037,7 +1267,7 @@ result_content get_IIO_Samples(PCM *m, const std::vector<struct iio_stacks_on_so
     return results;
 }
 
-void collect_data(PCM *m, const double delay, vector<struct iio_stacks_on_socket>& iios, vector<struct counter>& ctrs)
+void collect_data(PCM *m, const double delay, vector<struct iio_stacks_on_socket>& iios, vector<struct iio_counter>& ctrs)
 {
     const uint32_t delay_ms = uint32_t(delay * 1000 / ctrs.size());
     for (auto counter = ctrs.begin(); counter != ctrs.end(); ++counter) {
@@ -1047,107 +1277,94 @@ void collect_data(PCM *m, const double delay, vector<struct iio_stacks_on_socket
     }
 }
 
-/**
- * For debug only
- */
-void print_PCIeMapping(const std::vector<struct iio_stacks_on_socket>& iios, const PCIDB & pciDB)
+void print_PCIeMapping(const std::vector<struct iio_stacks_on_socket>& iios, const PCIDB & pciDB, std::ostream& stream)
 {
+    uint32_t header_width = 100;
+    string row;
+    vector<string> buffer;
+
     for (auto it = iios.begin(); it != iios.end(); ++it) {
-        printf("Socket %d\n", (*it).socket_id);
-        for (int stack = 0; stack < 6; stack++) {
-            for (auto & stack : it->stacks) {
-                printf("\t%s root bus: 0x%x", stack.stack_name.c_str(), stack.busno);
-		printf("\tflipped: %s\n", stack.flipped ? "true" : "false");
-                for (auto& part : stack.parts) {
-                    vector<struct pci> pp = part.child_pci_devs;
-                    uint8_t level = 1;
-                    for (std::vector<struct pci>::const_iterator iunit = pp.begin(); iunit != pp.end(); ++iunit)
-                    {
-                        uint64_t header_width = 100;
-                        string row = build_pci_header(pciDB, (uint32_t)header_width, *iunit, -1, level);
-                        printf("\t\t%s\n", row.c_str());
-                        if (iunit->header_type == 1)
-                            level += 1;
+        row = "Socket " + std::to_string((*it).socket_id);
+        buffer.push_back(row);
+        for (auto & stack : it->stacks) {
+            std::stringstream ss;
+            ss << "\t" << stack.stack_name << " domain 0x" << std::hex << std::setfill('0') << std::setw(4) << stack.domain
+               << "; root bus: 0x" << std::setfill('0') << std::setw(2) << (int)stack.busno << "\tflipped: " << (stack.flipped ? "true" : "false");
+            buffer.push_back(ss.str());
+            for (auto& part : stack.parts) {
+                vector<struct pci> pp = part.child_pci_devs;
+                uint8_t level = 5;
+                for (std::vector<struct pci>::const_iterator iunit = pp.begin(); iunit != pp.end(); ++iunit) {
+                    row = build_pci_header(pciDB, header_width, *iunit, -1, level);
+                    buffer.push_back(row);
+                    if (iunit->hasChildDevices()) {
+                        build_pci_tree(buffer, pciDB, header_width, *iunit, -1, level + 1);
+                    } else if (iunit->header_type == 1) {
+                        level++;
                     }
                 }
             }
         }
     }
-}
-
-bool check_argument_equals(const char* arg, std::initializer_list<const char*> arg_names)
-{
-    const auto arg_len = strlen(arg);
-    for (const auto& arg_name: arg_names) {
-        if (arg_len == strlen(arg_name) && strncmp(arg, arg_name, arg_len) == 0) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-bool extract_argument_value(const char* arg, std::initializer_list<const char*> arg_names, std::string& value)
-{
-    const auto arg_len = strlen(arg);
-    for (const auto& arg_name: arg_names) {
-        const auto arg_name_len = strlen(arg_name);
-        if (arg_len > arg_name_len && strncmp(arg, arg_name, arg_name_len) == 0 && arg[arg_name_len] == '=') {
-            value = arg + arg_name_len + 1;
-            const auto last_pos = value.find_last_not_of("\"");
-            if (last_pos != string::npos) {
-                value.erase(last_pos + 1);
-            }
-            const auto first_pos = value.find_first_not_of("\"");
-            if (first_pos != string::npos) {
-                value.erase(0, first_pos);
-            }
-
-            return true;
-        }
-    }
-
-    return false;
+    display(buffer, stream);
 }
 
 void print_usage(const string& progname)
 {
-    cerr << "\n Usage: \n " << progname << " --help | [interval] [options] \n";
-    cerr << "   <interval>                           => time interval in seconds (floating point number is accepted)\n";
-    cerr << "                                        to sample performance counters.\n";
-    cerr << "                                        If not specified - 3.0 is used\n";
-    cerr << " Supported <options> are: \n";
-    cerr << "  -h    | --help  | /h               => print this help and exit\n";
-    cerr << "  -csv[=file.csv] | /csv[=file.csv]  => output compact CSV format to screen or\n"
+    cout << "\n Usage: \n " << progname << " --help | [interval] [options] \n";
+    cout << "   <interval>                           => time interval in seconds (floating point number is accepted)\n";
+    cout << "                                        to sample performance counters.\n";
+    cout << "                                        If not specified - 3.0 is used\n";
+    cout << " Supported <options> are: \n";
+    cout << "  -h    | --help  | /h               => print this help and exit\n";
+    cout << "  -silent                            => silence information output and print only measurements\n";
+    cout << "  --version                          => print application version\n";
+    cout << "  -csv[=file.csv] | /csv[=file.csv]  => output compact CSV format to screen or\n"
          << "                                        to a file, in case filename is provided\n";
-    cerr << "  -csv-delimiter=<value>  | /csv-delimiter=<value>   => set custom csv delimiter\n";
-    cerr << "  -human-readable | /human-readable  => use human readable format for output (for csv only)\n";
-    cerr << "  -i[=number] | /i[=number]          => allow to determine number of iterations\n";
-    cerr << " Examples:\n";
-    cerr << "  " << progname << " 1.0 -i=10             => print counters every second 10 times and exit\n";
-    cerr << "  " << progname << " 0.5 -csv=test.log     => twice a second save counter values to test.log in CSV format\n";
-    cerr << "  " << progname << " -csv -human-readable  => every 3 second print counters in human-readable CSV format\n";
-    cerr << "\n";
+    cout << "  -csv-delimiter=<value>  | /csv-delimiter=<value>   => set custom csv delimiter\n";
+    cout << "  -human-readable | /human-readable  => use human readable format for output (for csv only)\n";
+    cout << "  -root-port | /root-port            => add root port devices to output (for csv only)\n";
+    cout << "  -i[=number] | /i[=number]          => allow to determine number of iterations\n";
+    cout << " Examples:\n";
+    cout << "  " << progname << " 1.0 -i=10             => print counters every second 10 times and exit\n";
+    cout << "  " << progname << " 0.5 -csv=test.log     => twice a second save counter values to test.log in CSV format\n";
+    cout << "  " << progname << " -csv -human-readable  => every 3 second print counters in human-readable CSV format\n";
+    cout << "\n";
 }
 
-int main(int argc, char * argv[])
+PCM_MAIN_NOTHROW;
+
+int mainThrows(int argc, char * argv[])
 {
+    if(print_version(argc, argv))
+        exit(EXIT_SUCCESS);
+
+    null_stream nullStream;
+    check_and_set_silent(argc, argv, nullStream);
+
     set_signal_handlers();
-    std::cout << "\n Processor Counter Monitor " << PCM_VERSION << "\n";
-    std::cout << "\n This utility measures Skylake-SP IIO information\n\n";
+
+    std::cout << "\n Intel(r) Performance Counter Monitor " << PCM_VERSION << "\n";
+    std::cout << "\n This utility measures IIO information\n\n";
 
     string program = string(argv[0]);
 
-    vector<struct counter> counters;
+    vector<struct iio_counter> counters;
     PCIDB pciDB;
     load_PCIDB(pciDB);
     bool csv = false;
     bool human_readable = false;
+    bool show_root_port = false;
     std::string csv_delimiter = ",";
     std::string output_file;
     double delay = PCM_DELAY_DEFAULT;
+    bool list = false;
     MainLoop mainLoop;
     PCM * m = PCM::getInstance();
+    iio_evt_parse_context evt_ctx;
+    // Map with metrics names.
+    map<string,std::pair<h_id,std::map<string,v_id>>> nameMap;
+    map<string,uint32_t> opcodeFieldMap;
 
     while (argc > 1) {
         argv++;
@@ -1156,6 +1373,10 @@ int main(int argc, char * argv[])
         if (check_argument_equals(*argv, {"--help", "-h", "/h"})) {
             print_usage(program);
             exit(EXIT_FAILURE);
+        }
+        else if (check_argument_equals(*argv, {"-silent", "/silent"})) {
+            // handled in check_and_set_silent
+            continue;
         }
         else if (extract_argument_value(*argv, {"-csv-delimiter", "/csv-delimiter"}, arg_value)) {
             csv_delimiter = std::move(arg_value);
@@ -1170,32 +1391,52 @@ int main(int argc, char * argv[])
         else if (check_argument_equals(*argv, {"-human-readable", "/human-readable"})) {
             human_readable = true;
         }
+        else if (check_argument_equals(*argv, {"--list"})) {
+            list = true;
+        }
+        else if (check_argument_equals(*argv, {"-root-port", "/root-port"})) {
+            show_root_port = true;
+        }
         else if (mainLoop.parseArg(*argv)) {
             continue;
         }
         else {
-            // any other options positional that is a floating point number is treated as <delay>,
-            // while the other options are ignored with a warning issues to stderr
-            double delay_input = 0.0;
-            istringstream is_str_stream(*argv);
-            is_str_stream >> noskipws >> delay_input;
-            if (is_str_stream.eof() && !is_str_stream.fail()) {
-                if (delay_input < 0) {
-                    cerr << "Invalid delay specified: \"" << *argv << "\". Delay should be positive.\n";
-                    print_usage(program);
-                    exit(EXIT_FAILURE);
-                }
-                delay = delay_input;
-            }
-            else {
-                cerr << "WARNING: unknown command-line option: \"" << *argv << "\". Ignoring it.\n";
-                print_usage(program);
-                exit(EXIT_FAILURE);
-            }
+            delay = parse_delay(*argv, program, (print_usage_func)print_usage);
+            continue;
         }
     }
 
     print_cpu_details();
+
+    //TODO: remove binding to max sockets count.
+    if (m->getNumSockets() > max_sockets) {
+        cerr << "Only systems with up to " << max_sockets << " sockets are supported! Program aborted\n";
+        exit(EXIT_FAILURE);
+    }
+
+    auto mapping = IPlatformMapping::getPlatformMapping(m->getCPUModel(), m->getNumSockets());
+    if (!mapping) {
+        cerr << "Failed to discover pci tree: unknown platform" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    std::vector<struct iio_stacks_on_socket> iios;
+    if (!mapping->pciTreeDiscover(iios)) {
+        exit(EXIT_FAILURE);
+    }
+
+    std::ostream* output = &std::cout;
+    std::fstream file_stream;
+    if (!output_file.empty()) {
+        file_stream.open(output_file.c_str(), std::ios_base::out);
+        output = &file_stream;
+    }
+
+    if (list) {
+        print_PCIeMapping(iios, pciDB, *output);
+        return 0;
+    }
+
     string ev_file_name;
     if (m->IIOEventsAvailable())
     {
@@ -1225,44 +1466,29 @@ int main(int argc, char * argv[])
     opcodeFieldMap["divider"] = PCM::DIVIDER;
     opcodeFieldMap["ctr"] = PCM::COUNTER_INDEX;
 
-    counters = load_events(m, ev_file_name.c_str());
-    //print_nameMap();
+    evt_ctx.m = m;
+    evt_ctx.ctrs.clear();//fill the ctrs by evt_handler call back func.
+
+    try
+    {
+        load_events(ev_file_name, opcodeFieldMap, iio_evt_parse_handler, (void *)&evt_ctx, nameMap);
+    }
+    catch (std::exception & e)
+    {
+        std::cerr << "Error info:" << e.what() << "\n";
+        std::cerr << "Event configure file have the problem and cause the program exit, please double check it!\n";
+        exit(EXIT_FAILURE);
+    }
+
+    //print_nameMap(nameMap);
     //TODO: Taking from cli
-
-    //TODO: remove binding to max sockets count.
-    if (m->getNumSockets() > max_sockets) {
-        cerr << "Only systems with up to " << max_sockets << " sockets are supported! Program aborted\n";
-        exit(EXIT_FAILURE);
-    }
-
-    auto mapping = IPlatformMapping::getPlatformMapping(m->getCPUModel());
-    if (!mapping) {
-        cerr << "Failed to discover pci tree: unknown platform" << endl;
-        exit(EXIT_FAILURE);
-    }
-
-    std::vector<struct iio_stacks_on_socket> iios;
-    if (!mapping->pciTreeDiscover(iios, m->getNumSockets())) {
-        exit(EXIT_FAILURE);
-    }
-
-    /* Debug only:
-    print_PCIeMapping(iios, pciDB);
-    return 0;
-    */
-    std::ostream* output = &std::cout;
-    std::fstream file_stream;
-    if (!output_file.empty()) {
-        file_stream.open(output_file.c_str(), std::ios_base::out);
-        output = &file_stream;
-    }
 
     mainLoop([&]()
     {
-        collect_data(m, delay, iios, counters);
+        collect_data(m, delay, iios, evt_ctx.ctrs);
         vector<string> display_buffer = csv ?
-            build_csv(iios, counters, human_readable, csv_delimiter) :
-            build_display(iios, counters, pciDB);
+            build_csv(iios, evt_ctx.ctrs, human_readable, show_root_port, csv_delimiter, nameMap) :
+            build_display(iios, evt_ctx.ctrs, pciDB, nameMap);
         display(display_buffer, *output);
         return true;
     });
