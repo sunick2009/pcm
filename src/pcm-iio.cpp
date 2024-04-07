@@ -15,6 +15,7 @@
 #include <memory>
 #include <fstream>
 #include <stdlib.h>
+#include <limits>
 #include <stdexcept>      // std::length_error
 #include <cstdint>
 #include <numeric>
@@ -45,7 +46,6 @@ using namespace pcm;
 #define SKX_UNC_SOCKETID_UBOX_LNID_OFFSET 0xC0
 #define SKX_UNC_SOCKETID_UBOX_GID_OFFSET  0xD4
 
-const uint8_t max_sockets = 4;
 static const std::string iio_stack_names[6] = {
     "IIO Stack 0 - CBDMA/DMI      ",
     "IIO Stack 1 - PCIe0          ",
@@ -144,33 +144,63 @@ static const std::map<int, int> snr_sad_to_pmu_id_mapping = {
 #define QATV2_DID   0x4940 // QuickAssist (CPM) v2
 
 #define SPR_DMI_PART_ID                7
+#define SPR_XCC_HQM_PART_ID            5
+#define SPR_MCC_HQM_PART_ID            4
+#define SPR_XCC_QAT_PART_ID            4
+#define SPR_MCC_QAT_PART_ID            5
 #define SPR_SAD_CONTROL_CFG_OFFSET     SNR_ICX_SAD_CONTROL_CFG_OFFSET
 
-#define SPR_DMI_PMON_ID         1
-#define SPR_PCIE_GEN5_0_PMON_ID 2
-#define SPR_PCIE_GEN5_1_PMON_ID 4
-#define SPR_PCIE_GEN5_2_PMON_ID 6
-#define SPR_PCIE_GEN5_3_PMON_ID 7
-#define SPR_PCIE_GEN5_4_PMON_ID 9
-#define SPR_IDX0_PMON_ID        0
-#define SPR_IDX1_PMON_ID        3
-#define SPR_IDX2_PMON_ID        5
-#define SPR_IDX3_PMON_ID        8
+#define SPR_PCU_CR3_DID 0x325b
+#define SPR_PCU_CR3_REG_DEVICE 0x1e
+#define SPR_PCU_CR3_REG_FUNCTION 0x03
+#define SPR_CAPID4_OFFSET 0x94
+#define SPR_CAPID4_GET_PHYSICAL_CHOP(capid4) ((capid4 >> 6) & 3)
+#define SPR_PHYSICAL_CHOP_XCC 0b11
+#define SPR_PHYSICAL_CHOP_MCC 0b01
 
-const std::map<int, int> spr_sad_to_pmu_id_mapping = {
-    { 0,  SPR_DMI_PMON_ID         },
-    { 1,  SPR_PCIE_GEN5_0_PMON_ID },
-    { 2,  SPR_PCIE_GEN5_1_PMON_ID },
-    { 3,  SPR_PCIE_GEN5_2_PMON_ID },
-    { 4,  SPR_PCIE_GEN5_3_PMON_ID },
-    { 5,  SPR_PCIE_GEN5_4_PMON_ID },
-    { 8,  SPR_IDX0_PMON_ID        },
-    { 9,  SPR_IDX1_PMON_ID        },
-    { 10, SPR_IDX2_PMON_ID        },
-    { 11, SPR_IDX3_PMON_ID        }
+#define SPR_XCC_DMI_PMON_ID         1
+#define SPR_XCC_PCIE_GEN5_0_PMON_ID 2
+#define SPR_XCC_PCIE_GEN5_1_PMON_ID 4
+#define SPR_XCC_PCIE_GEN5_2_PMON_ID 6
+#define SPR_XCC_PCIE_GEN5_3_PMON_ID 7
+#define SPR_XCC_PCIE_GEN5_4_PMON_ID 9
+#define SPR_XCC_IDX0_PMON_ID        0
+#define SPR_XCC_IDX1_PMON_ID        3
+#define SPR_XCC_IDX2_PMON_ID        5
+#define SPR_XCC_IDX3_PMON_ID        8
+
+const std::map<int, int> spr_xcc_sad_to_pmu_id_mapping = {
+    { 0,  SPR_XCC_DMI_PMON_ID         },
+    { 1,  SPR_XCC_PCIE_GEN5_0_PMON_ID },
+    { 2,  SPR_XCC_PCIE_GEN5_1_PMON_ID },
+    { 3,  SPR_XCC_PCIE_GEN5_2_PMON_ID },
+    { 4,  SPR_XCC_PCIE_GEN5_3_PMON_ID },
+    { 5,  SPR_XCC_PCIE_GEN5_4_PMON_ID },
+    { 8,  SPR_XCC_IDX0_PMON_ID        },
+    { 9,  SPR_XCC_IDX1_PMON_ID        },
+    { 10, SPR_XCC_IDX2_PMON_ID        },
+    { 11, SPR_XCC_IDX3_PMON_ID        }
 };
 
-static const std::string spr_iio_stack_names[] = {
+#define SPR_MCC_DMI_PMON_ID         10
+#define SPR_MCC_PCIE_GEN5_0_PMON_ID 0 // assumption
+#define SPR_MCC_PCIE_GEN5_1_PMON_ID 1
+#define SPR_MCC_PCIE_GEN5_2_PMON_ID 2
+#define SPR_MCC_PCIE_GEN5_3_PMON_ID 4 // assumption
+#define SPR_MCC_PCIE_GEN5_4_PMON_ID 5
+#define SPR_MCC_IDX0_PMON_ID        3
+
+const std::map<int, int> spr_mcc_sad_to_pmu_id_mapping = {
+    { 0, SPR_MCC_PCIE_GEN5_0_PMON_ID },
+    { 1, SPR_MCC_PCIE_GEN5_1_PMON_ID },
+    { 2, SPR_MCC_PCIE_GEN5_2_PMON_ID },
+    { 3, SPR_MCC_DMI_PMON_ID         },
+    { 4, SPR_MCC_PCIE_GEN5_3_PMON_ID },
+    { 5, SPR_MCC_PCIE_GEN5_4_PMON_ID },
+    { 8, SPR_MCC_IDX0_PMON_ID        },
+};
+
+static const std::string spr_xcc_iio_stack_names[] = {
     "IIO Stack 0 - IDX0  ",
     "IIO Stack 1 - DMI   ",
     "IIO Stack 2 - PCIe0 ",
@@ -185,12 +215,147 @@ static const std::string spr_iio_stack_names[] = {
     "IIO Stack 11 - NONE ",
 };
 
+/*
+ * SPR MCC has 7 I/O stacks but PMON block for DMI has ID number 10.
+ * And just to follow such enumeration keep Stack 10 for DMI.
+ */
+static const std::string spr_mcc_iio_stack_names[] = {
+    "IIO Stack 0 - PCIe0 ",
+    "IIO Stack 1 - PCIe1 ",
+    "IIO Stack 2 - PCIe2 ",
+    "IIO Stack 3 - IDX0  ",
+    "IIO Stack 4 - PCIe3 ",
+    "IIO Stack 5 - PCIe4 ",
+    "IIO Stack 6 - NONE  ",
+    "IIO Stack 7 - NONE  ",
+    "IIO Stack 8 - NONE  ",
+    "IIO Stack 9 - NONE  ",
+    "IIO Stack 10 - DMI  ",
+};
+
+#define EMR_DMI_PMON_ID         7
+#define EMR_PCIE_GEN5_0_PMON_ID 1
+#define EMR_PCIE_GEN5_1_PMON_ID 2
+#define EMR_PCIE_GEN5_2_PMON_ID 3
+#define EMR_PCIE_GEN5_3_PMON_ID 8
+#define EMR_PCIE_GEN5_4_PMON_ID 6
+#define EMR_IDX0_PMON_ID        0
+#define EMR_IDX1_PMON_ID        4
+#define EMR_IDX2_PMON_ID        5
+#define EMR_IDX3_PMON_ID        9
+
+const std::map<int, int> emr_sad_to_pmu_id_mapping = {
+    { 0,  EMR_DMI_PMON_ID         },
+    { 1,  EMR_PCIE_GEN5_0_PMON_ID },
+    { 2,  EMR_PCIE_GEN5_1_PMON_ID },
+    { 3,  EMR_PCIE_GEN5_2_PMON_ID },
+    { 4,  EMR_PCIE_GEN5_3_PMON_ID },
+    { 5,  EMR_PCIE_GEN5_4_PMON_ID },
+    { 8,  EMR_IDX0_PMON_ID        },
+    { 9,  EMR_IDX1_PMON_ID        },
+    { 10, EMR_IDX2_PMON_ID        },
+    { 11, EMR_IDX3_PMON_ID        }
+};
+
+static const std::string emr_iio_stack_names[] = {
+    "IIO Stack 0 - IDX0  ",
+    "IIO Stack 1 - PCIe3 ",
+    "IIO Stack 2 - PCIe0 ",
+    "IIO Stack 3 - IDX1  ",
+    "IIO Stack 4 - PCIe1 ",
+    "IIO Stack 5 - IDX2  ",
+    "IIO Stack 6 - PCIe2 ",
+    "IIO Stack 7  - DMI",
+    "IIO Stack 8  - IDX3 ",
+    "IIO Stack 9  - PCIe4",
+    "IIO Stack 10 - NONE ",
+    "IIO Stack 11 - NONE ",
+};
+
+enum EagleStreamPlatformStacks
+{
+    esDMI = 0,
+    esPCIe0,
+    esPCIe1,
+    esPCIe2,
+    esPCIe3,
+    esPCIe4,
+    esDINO0,
+    esDINO1,
+    esDINO2,
+    esDINO3,
+    esEndOfList
+};
+
+const std::vector<int> spr_xcc_stacks_enumeration = {
+    /* esDMI   */ SPR_XCC_DMI_PMON_ID,
+    /* esPCIe0 */ SPR_XCC_PCIE_GEN5_0_PMON_ID,
+    /* esPCIe1 */ SPR_XCC_PCIE_GEN5_1_PMON_ID,
+    /* esPCIe2 */ SPR_XCC_PCIE_GEN5_2_PMON_ID,
+    /* esPCIe3 */ SPR_XCC_PCIE_GEN5_3_PMON_ID,
+    /* esPCIe4 */ SPR_XCC_PCIE_GEN5_4_PMON_ID,
+    /* esDINO0 */ SPR_XCC_IDX0_PMON_ID,
+    /* esDINO1 */ SPR_XCC_IDX1_PMON_ID,
+    /* esDINO2 */ SPR_XCC_IDX2_PMON_ID,
+    /* esDINO3 */ SPR_XCC_IDX3_PMON_ID,
+};
+
+const std::vector<int> spr_mcc_stacks_enumeration = {
+    /* esDMI   */ SPR_MCC_DMI_PMON_ID,
+    /* esPCIe0 */ SPR_MCC_PCIE_GEN5_0_PMON_ID,
+    /* esPCIe1 */ SPR_MCC_PCIE_GEN5_1_PMON_ID,
+    /* esPCIe2 */ SPR_MCC_PCIE_GEN5_2_PMON_ID,
+    /* esPCIe3 */ SPR_MCC_PCIE_GEN5_3_PMON_ID,
+    /* esPCIe4 */ SPR_MCC_PCIE_GEN5_4_PMON_ID,
+    /* esDINO0 */ SPR_MCC_IDX0_PMON_ID,
+};
+
+const std::vector<int> emr_stacks_enumeration = {
+    /* esDMI   */ EMR_DMI_PMON_ID,
+    /* esPCIe0 */ EMR_PCIE_GEN5_0_PMON_ID,
+    /* esPCIe1 */ EMR_PCIE_GEN5_1_PMON_ID,
+    /* esPCIe2 */ EMR_PCIE_GEN5_2_PMON_ID,
+    /* esPCIe3 */ EMR_PCIE_GEN5_3_PMON_ID,
+    /* esPCIe4 */ EMR_PCIE_GEN5_4_PMON_ID,
+    /* esDINO0 */ EMR_IDX0_PMON_ID,
+    /* esDINO1 */ EMR_IDX1_PMON_ID,
+    /* esDINO2 */ EMR_IDX2_PMON_ID,
+    /* esDINO3 */ EMR_IDX3_PMON_ID,
+};
+
+enum class EagleStreamSupportedTypes
+{
+    esInvalid = -1,
+    esSprXcc,
+    esSprMcc,
+    esEmrXcc
+};
+
+typedef EagleStreamSupportedTypes estype;
+
+const std::map<estype, std::vector<int>> es_stacks_enumeration = {
+    {estype::esSprXcc, spr_xcc_stacks_enumeration},
+    {estype::esSprMcc, spr_mcc_stacks_enumeration},
+    {estype::esEmrXcc, emr_stacks_enumeration    },
+};
+
+const std::map<estype, const std::string *> es_stack_names = {
+    {estype::esSprXcc, spr_xcc_iio_stack_names},
+    {estype::esSprMcc, spr_mcc_iio_stack_names},
+    {estype::esEmrXcc, emr_iio_stack_names    },
+};
+
+const std::map<estype, std::map<int, int>> es_sad_to_pmu_id_mapping = {
+    {estype::esSprXcc, spr_xcc_sad_to_pmu_id_mapping},
+    {estype::esSprMcc, spr_mcc_sad_to_pmu_id_mapping},
+    {estype::esEmrXcc, emr_sad_to_pmu_id_mapping    },
+};
+
 struct iio_counter : public counter {
   std::vector<result_content> data;
 };
 
-//TODO: remove binding to stacks amount
-result_content results(max_sockets, stack_content(12, ctr_data()));
+result_content results;
 
 typedef struct
 {
@@ -430,15 +595,17 @@ vector<string> build_csv(vector<struct iio_stacks_on_socket>& iios, vector<struc
 class IPlatformMapping {
 private:
     uint32_t m_sockets;
+    uint32_t m_model;
 protected:
     void probeDeviceRange(std::vector<struct pci> &child_pci_devs, int domain, int secondary, int subordinate);
 public:
-    IPlatformMapping(uint32_t sockets_count) : m_sockets(sockets_count) {}
+    IPlatformMapping(int cpu_model, uint32_t sockets_count) : m_sockets(sockets_count), m_model(cpu_model) {}
     virtual ~IPlatformMapping() {};
     static std::unique_ptr<IPlatformMapping> getPlatformMapping(int cpu_model, uint32_t sockets_count);
     virtual bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) = 0;
 
     uint32_t socketsCount() const { return m_sockets; }
+    uint32_t cpuId() const { return m_model; }
 };
 
 // Mapping for SkyLake Server.
@@ -446,7 +613,7 @@ class PurleyPlatformMapping: public IPlatformMapping {
 private:
     void getUboxBusNumbers(std::vector<uint32_t>& ubox);
 public:
-    PurleyPlatformMapping(uint32_t sockets_count) : IPlatformMapping(sockets_count) {}
+    PurleyPlatformMapping(int cpu_model, uint32_t sockets_count) : IPlatformMapping(cpu_model, sockets_count) {}
     ~PurleyPlatformMapping() = default;
     bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) override;
 };
@@ -538,7 +705,7 @@ bool PurleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_soc
 class IPlatformMapping10Nm: public IPlatformMapping {
 private:
 public:
-    IPlatformMapping10Nm(uint32_t sockets_count) : IPlatformMapping(sockets_count) {}
+    IPlatformMapping10Nm(int cpu_model, uint32_t sockets_count) : IPlatformMapping(cpu_model, sockets_count) {}
     ~IPlatformMapping10Nm() = default;
     bool getSadIdRootBusMap(uint32_t socket_id, std::map<uint8_t, uint8_t>& sad_id_bus_map);
 };
@@ -587,7 +754,7 @@ private:
     const std::map<int, int>& sad_to_pmu_id_mapping;
     const std::string * iio_stack_names;
 public:
-    WhitleyPlatformMapping(uint32_t sockets_count) : IPlatformMapping10Nm(sockets_count),
+    WhitleyPlatformMapping(int cpu_model, uint32_t sockets_count) : IPlatformMapping10Nm(cpu_model, sockets_count),
         icx_d(PCM::getInstance()->getCPUModelFromCPUID() == PCM::ICX_D),
         sad_to_pmu_id_mapping(icx_d ? icx_d_sad_to_pmu_id_mapping : icx_sad_to_pmu_id_mapping),
         iio_stack_names(icx_d ? icx_d_iio_stack_names : icx_iio_stack_names)
@@ -716,7 +883,7 @@ bool WhitleyPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_so
 class JacobsvillePlatformMapping: public IPlatformMapping10Nm {
 private:
 public:
-    JacobsvillePlatformMapping(uint32_t sockets_count) : IPlatformMapping10Nm(sockets_count) {}
+    JacobsvillePlatformMapping(int cpu_model, uint32_t sockets_count) : IPlatformMapping10Nm(cpu_model, sockets_count) {}
     ~JacobsvillePlatformMapping() = default;
     bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) override;
     bool JacobsvilleAccelerators(const std::pair<uint8_t, uint8_t>& sad_id_bus_pair, struct iio_stack& stack);
@@ -886,12 +1053,54 @@ private:
     bool eagleStreamDmiStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket);
     bool eagleStreamPciStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket);
     bool eagleStreamAcceleratorStackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket);
+    bool isDmiStack(int unit);
+    bool isPcieStack(int unit);
+    bool isDinoStack(int unit);
+    std::uint32_t m_chop;
+    EagleStreamSupportedTypes m_es_type;
 public:
-    EagleStreamPlatformMapping(uint32_t sockets_count) : IPlatformMapping(sockets_count) {}
+    EagleStreamPlatformMapping(int cpu_model, uint32_t sockets_count) : IPlatformMapping(cpu_model, sockets_count), m_chop(0), m_es_type(estype::esInvalid) {}
     ~EagleStreamPlatformMapping() = default;
+    bool setChopValue();
+    bool isXccPlatform() const { return m_chop == kXccChop; }
+
+    const std::uint32_t kXccChop = 0b11;
+    const std::uint32_t kMccChop = 0b01;
 
     bool pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios) override;
 };
+
+bool EagleStreamPlatformMapping::setChopValue()
+{
+    for (uint16_t b = 0; b < 256; b++) {
+        struct pci pci_dev(0, b, SPR_PCU_CR3_REG_DEVICE, SPR_PCU_CR3_REG_FUNCTION);
+        if (!probe_pci(&pci_dev)) {
+            continue;
+        }
+        if (!((pci_dev.vendor_id == PCM_INTEL_PCI_VENDOR_ID) && (pci_dev.device_id == SPR_PCU_CR3_DID))) {
+            continue;
+        }
+        std::uint32_t capid4;
+        PciHandleType h(0, b, SPR_PCU_CR3_REG_DEVICE, SPR_PCU_CR3_REG_FUNCTION);
+        h.read32(SPR_CAPID4_OFFSET, &capid4);
+        if (capid4 == (std::numeric_limits<std::uint32_t>::max)()) {
+            std::cerr << "Cannot read PCU RC3 register" << std::endl;
+            return false;
+        }
+        capid4 = SPR_CAPID4_GET_PHYSICAL_CHOP(capid4);
+        if (capid4 == kXccChop || capid4 == kMccChop) {
+            m_chop = capid4;
+            m_es_type = cpuId() == PCM::SPR ? (m_chop == kXccChop ? estype::esSprXcc : estype::esSprMcc) : estype::esEmrXcc;
+        }
+        else {
+            std::cerr << "Unknown chop value " << capid4 << std::endl;
+            return false;
+        }
+        return true;
+    }
+    std::cerr << "Cannot find PCU RC3 registers on the system. Device ID is " << std::hex << SPR_PCU_CR3_DID << std::dec << std::endl;
+    return false;
+}
 
 bool EagleStreamPlatformMapping::getRootBuses(std::map<int, std::map<int, struct bdf>> &root_buses)
 {
@@ -918,18 +1127,19 @@ bool EagleStreamPlatformMapping::getRootBuses(std::map<int, std::map<int, struct
                         return false;
                     }
 
+                    const auto& sad_to_pmu_id_mapping = es_sad_to_pmu_id_mapping.at(m_es_type);
                     for (int cpuBusId = 0; cpuBusId < SPR_MSM_CPUBUSNO_MAX; ++cpuBusId) {
                         if (!((cpuBusValid >> cpuBusId) & 0x1))
                         {
                             cout << "CPU bus " << cpuBusId << " is disabled on package " << package_id << endl;
                             continue;
                         }
-                        if (spr_sad_to_pmu_id_mapping.find(cpuBusId) == spr_sad_to_pmu_id_mapping.end())
+                        if (sad_to_pmu_id_mapping.find(cpuBusId) == sad_to_pmu_id_mapping.end())
                         {
                             cerr << "Cannot map CPU bus " << cpuBusId << " to IO PMU ID" << endl;
                             continue;
                         }
-                        int pmuId = spr_sad_to_pmu_id_mapping.at(cpuBusId);
+                        int pmuId = sad_to_pmu_id_mapping.at(cpuBusId);
                         int rootBus = (cpuBusNo[(int)(cpuBusId / 4)] >> ((cpuBusId % 4) * 8)) & 0xff;
                         root_buses[package_id][pmuId] = bdf(domain, rootBus, 0, 0);
                         cout << "Mapped CPU bus #" << cpuBusId << " (domain " << domain << " bus " << std::hex << rootBus << std::dec << ") to IO PMU #"
@@ -947,12 +1157,13 @@ bool EagleStreamPlatformMapping::eagleStreamDmiStackProbe(int unit, const struct
 {
     struct iio_stack stack;
     stack.iio_unit_id = unit;
-    stack.stack_name = spr_iio_stack_names[unit];
+    stack.stack_name = es_stack_names.at(m_es_type)[unit];
     stack.busno = address.busno;
     stack.domain = address.domainno;
     struct iio_bifurcated_part pch_part;
     struct pci *pci = &pch_part.root_pci_dev;
-    pch_part.part_id = SPR_DMI_PART_ID;
+    auto dmi_part_id = SPR_DMI_PART_ID;
+    pch_part.part_id = dmi_part_id;
     pci->bdf = address;
     if (!probe_pci(pci)) {
         cerr << "Failed to probe DMI Stack: address: " << std::setw(4) << std::setfill('0') << std::hex << address.domainno <<
@@ -965,7 +1176,7 @@ bool EagleStreamPlatformMapping::eagleStreamDmiStackProbe(int unit, const struct
     if (!iio_on_socket.socket_id)
         probeDeviceRange(pch_part.child_pci_devs, pci->bdf.domainno, pci->secondary_bus_number, pci->subordinate_bus_number);
 
-    pci->parts_no.push_back(SPR_DMI_PART_ID);
+    pci->parts_no.push_back(dmi_part_id);
 
     stack.parts.push_back(pch_part);
     iio_on_socket.stacks.push_back(stack);
@@ -981,7 +1192,7 @@ bool EagleStreamPlatformMapping::eagleStreamPciStackProbe(int unit, const struct
     stack.domain = address.domainno;
     stack.busno = address.busno;
     stack.iio_unit_id = unit;
-    stack.stack_name = spr_iio_stack_names[unit];
+    stack.stack_name = es_stack_names.at(m_es_type)[unit];
     for (int slot = 1; slot < 9; ++slot)
     {
         // Check if port is enabled
@@ -1004,6 +1215,7 @@ bool EagleStreamPlatformMapping::eagleStreamPciStackProbe(int unit, const struct
                     }
                 }
             }
+            stack.parts.push_back(part);
         }
     }
     iio_on_socket.stacks.push_back(stack);
@@ -1020,7 +1232,7 @@ bool EagleStreamPlatformMapping::eagleStreamAcceleratorStackProbe(int unit, cons
     // Channel mappings are checked on B0 stepping
     auto rb = address.busno;
     const std::vector<int> acceleratorBuses{ rb, rb + 1, rb + 2, rb + 3 };
-    stack.stack_name = spr_iio_stack_names[unit];
+    stack.stack_name = es_stack_names.at(m_es_type)[unit];
     for (auto& b : acceleratorBuses) {
         for (auto d = 0; d < 32; ++d) {
             for (auto f = 0; f < 8; ++f) {
@@ -1041,10 +1253,10 @@ bool EagleStreamPlatformMapping::eagleStreamAcceleratorStackProbe(int unit, cons
                             pci_dev.parts_no.push_back(2);
                             break;
                         case HQMV2_DID:
-                            pci_dev.parts_no.push_back(5);
+                            pci_dev.parts_no.push_back(isXccPlatform() ? SPR_XCC_HQM_PART_ID : SPR_MCC_HQM_PART_ID);
                             break;
                         case QATV2_DID:
-                            pci_dev.parts_no.push_back(4);
+                            pci_dev.parts_no.push_back(isXccPlatform() ? SPR_XCC_QAT_PART_ID : SPR_MCC_QAT_PART_ID);
                             break;
                         default:
                             continue;
@@ -1061,30 +1273,49 @@ bool EagleStreamPlatformMapping::eagleStreamAcceleratorStackProbe(int unit, cons
     return true;
 }
 
+bool EagleStreamPlatformMapping::isDmiStack(int unit)
+{
+    const auto& stacks_enumeration = es_stacks_enumeration.at(m_es_type);
+
+    return stacks_enumeration[esDMI] == unit;
+}
+
+bool EagleStreamPlatformMapping::isPcieStack(int unit)
+{
+    const auto& stacks_enumeration = es_stacks_enumeration.at(m_es_type);
+
+    return stacks_enumeration[esPCIe0] == unit || stacks_enumeration[esPCIe1] == unit ||
+           stacks_enumeration[esPCIe2] == unit || stacks_enumeration[esPCIe3] == unit ||
+           stacks_enumeration[esPCIe4] == unit;
+}
+
+bool EagleStreamPlatformMapping::isDinoStack(int unit)
+{
+    const auto& stacks_enumeration = es_stacks_enumeration.at(m_es_type);
+
+    return stacks_enumeration[esDINO0] == unit || stacks_enumeration[esDINO1] == unit ||
+           stacks_enumeration[esDINO2] == unit || stacks_enumeration[esDINO3] == unit;
+}
+
 bool EagleStreamPlatformMapping::stackProbe(int unit, const struct bdf &address, struct iio_stacks_on_socket &iio_on_socket)
 {
-    switch (unit)
-    {
-        case SPR_DMI_PMON_ID:
-            return eagleStreamDmiStackProbe(unit, address, iio_on_socket);
-        case SPR_PCIE_GEN5_0_PMON_ID:
-        case SPR_PCIE_GEN5_1_PMON_ID:
-        case SPR_PCIE_GEN5_2_PMON_ID:
-        case SPR_PCIE_GEN5_3_PMON_ID:
-        case SPR_PCIE_GEN5_4_PMON_ID:
-            return eagleStreamPciStackProbe(unit, address, iio_on_socket);
-        case SPR_IDX0_PMON_ID:
-        case SPR_IDX1_PMON_ID:
-        case SPR_IDX2_PMON_ID:
-        case SPR_IDX3_PMON_ID:
-            return eagleStreamAcceleratorStackProbe(unit, address, iio_on_socket);
-        default:
-            return false;
+    if (isDmiStack(unit)) {
+        return eagleStreamDmiStackProbe(unit, address, iio_on_socket);
     }
+    else if (isPcieStack(unit)) {
+        return eagleStreamPciStackProbe(unit, address, iio_on_socket);
+    }
+    else if (isDinoStack(unit)) {
+        return eagleStreamAcceleratorStackProbe(unit, address, iio_on_socket);
+    }
+
+    return false;
 }
 
 bool EagleStreamPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_on_socket>& iios)
 {
+    if (!setChopValue()) return false;
+
     std::map<int, std::map<int, struct bdf>> root_buses;
     if (!getRootBuses(root_buses))
     {
@@ -1109,7 +1340,7 @@ bool EagleStreamPlatformMapping::pciTreeDiscover(std::vector<struct iio_stacks_o
 
 void IPlatformMapping::probeDeviceRange(std::vector<struct pci> &pci_devs, int domain, int secondary, int subordinate)
 {
-    for (uint8_t bus = secondary; bus <= subordinate; bus++) {
+    for (uint8_t bus = secondary; int(bus) <= subordinate; bus++) {
         for (uint8_t device = 0; device < 32; device++) {
             for (uint8_t function = 0; function < 8; function++) {
                 struct pci child_dev;
@@ -1132,13 +1363,14 @@ std::unique_ptr<IPlatformMapping> IPlatformMapping::getPlatformMapping(int cpu_m
 {
     switch (cpu_model) {
     case PCM::SKX:
-        return std::unique_ptr<IPlatformMapping>{new PurleyPlatformMapping(sockets_count)};
+        return std::unique_ptr<IPlatformMapping>{new PurleyPlatformMapping(cpu_model, sockets_count)};
     case PCM::ICX:
-        return std::unique_ptr<IPlatformMapping>{new WhitleyPlatformMapping(sockets_count)};
+        return std::unique_ptr<IPlatformMapping>{new WhitleyPlatformMapping(cpu_model, sockets_count)};
     case PCM::SNOWRIDGE:
-        return std::unique_ptr<IPlatformMapping>{new JacobsvillePlatformMapping(sockets_count)};
+        return std::unique_ptr<IPlatformMapping>{new JacobsvillePlatformMapping(cpu_model, sockets_count)};
     case PCM::SPR:
-        return std::unique_ptr<IPlatformMapping>{new EagleStreamPlatformMapping(sockets_count)};
+    case PCM::EMR:
+        return std::unique_ptr<IPlatformMapping>{new EagleStreamPlatformMapping(cpu_model, sockets_count)};
     default:
         return nullptr;
     }
@@ -1153,6 +1385,7 @@ ccr* get_ccr(PCM* m, uint64_t& ccr)
         case PCM::ICX:
         case PCM::SNOWRIDGE:
         case PCM::SPR:
+        case PCM::EMR:
             return new icx_ccr(ccr);
         default:
             cerr << m->getCPUFamilyModelString() << " is not supported! Program aborted" << endl;
@@ -1324,6 +1557,7 @@ void print_usage(const string& progname)
     cout << "  -csv-delimiter=<value>  | /csv-delimiter=<value>   => set custom csv delimiter\n";
     cout << "  -human-readable | /human-readable  => use human readable format for output (for csv only)\n";
     cout << "  -root-port | /root-port            => add root port devices to output (for csv only)\n";
+    cout << "  -list | --list                     => provide platform topology info\n";
     cout << "  -i[=number] | /i[=number]          => allow to determine number of iterations\n";
     cout << " Examples:\n";
     cout << "  " << progname << " 1.0 -i=10             => print counters every second 10 times and exit\n";
@@ -1336,13 +1570,11 @@ PCM_MAIN_NOTHROW;
 
 int mainThrows(int argc, char * argv[])
 {
-    if(print_version(argc, argv))
+    if (print_version(argc, argv))
         exit(EXIT_SUCCESS);
 
     null_stream nullStream;
     check_and_set_silent(argc, argv, nullStream);
-
-    set_signal_handlers();
 
     std::cout << "\n Intel(r) Performance Counter Monitor " << PCM_VERSION << "\n";
     std::cout << "\n This utility measures IIO information\n\n";
@@ -1350,8 +1582,6 @@ int mainThrows(int argc, char * argv[])
     string program = string(argv[0]);
 
     vector<struct iio_counter> counters;
-    PCIDB pciDB;
-    load_PCIDB(pciDB);
     bool csv = false;
     bool human_readable = false;
     bool show_root_port = false;
@@ -1360,11 +1590,9 @@ int mainThrows(int argc, char * argv[])
     double delay = PCM_DELAY_DEFAULT;
     bool list = false;
     MainLoop mainLoop;
-    PCM * m = PCM::getInstance();
     iio_evt_parse_context evt_ctx;
     // Map with metrics names.
     map<string,std::pair<h_id,std::map<string,v_id>>> nameMap;
-    map<string,uint32_t> opcodeFieldMap;
 
     while (argc > 1) {
         argv++;
@@ -1391,7 +1619,7 @@ int mainThrows(int argc, char * argv[])
         else if (check_argument_equals(*argv, {"-human-readable", "/human-readable"})) {
             human_readable = true;
         }
-        else if (check_argument_equals(*argv, {"--list"})) {
+        else if (check_argument_equals(*argv, {"-list", "--list"})) {
             list = true;
         }
         else if (check_argument_equals(*argv, {"-root-port", "/root-port"})) {
@@ -1406,13 +1634,14 @@ int mainThrows(int argc, char * argv[])
         }
     }
 
+    set_signal_handlers();
+
     print_cpu_details();
 
-    //TODO: remove binding to max sockets count.
-    if (m->getNumSockets() > max_sockets) {
-        cerr << "Only systems with up to " << max_sockets << " sockets are supported! Program aborted\n";
-        exit(EXIT_FAILURE);
-    }
+    PCM * m = PCM::getInstance();
+
+    PCIDB pciDB;
+    load_PCIDB(pciDB);
 
     auto mapping = IPlatformMapping::getPlatformMapping(m->getCPUModel(), m->getNumSockets());
     if (!mapping) {
@@ -1448,6 +1677,7 @@ int mainThrows(int argc, char * argv[])
         exit(EXIT_FAILURE);
     }
 
+    map<string,uint32_t> opcodeFieldMap;
     opcodeFieldMap["opcode"] = PCM::OPCODE;
     opcodeFieldMap["ev_sel"] = PCM::EVENT_SELECT;
     opcodeFieldMap["umask"] = PCM::UMASK;
@@ -1480,8 +1710,11 @@ int mainThrows(int argc, char * argv[])
         exit(EXIT_FAILURE);
     }
 
-    //print_nameMap(nameMap);
-    //TODO: Taking from cli
+#ifdef PCM_DEBUG
+    print_nameMap(nameMap);
+#endif
+
+    results.resize(m->getNumSockets(), stack_content(m->getMaxNumOfIIOStacks(), ctr_data()));
 
     mainLoop([&]()
     {

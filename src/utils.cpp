@@ -7,6 +7,10 @@
 #include <climits>
 #include <algorithm>
 #ifdef _MSC_VER
+#include <windows.h>
+#include <accctrl.h>
+#include <aclapi.h>
+#include <sddl.h>
 #include <process.h>
 #include <comdef.h>
 #else
@@ -746,6 +750,43 @@ double parse_delay(const char *arg, const std::string& progname, print_usage_fun
     }
 }
 
+std::list<int> extract_integer_list(const char *optarg){
+    const char *pstr = optarg;
+    std::list<int> corelist;
+    std::string snum1, snum2;
+    std::string *pnow = &snum1;
+    char nchar = ',';
+    while(*pstr != '\0' || nchar != ','){
+        nchar = ',';
+        if (*pstr != '\0'){
+            nchar = *pstr;
+            pstr++;
+        } 
+        //printf("c=%c\n",nchar);
+        if (nchar=='-' && pnow == &snum1 && snum1.size()>0){
+            pnow = &snum2;
+        }else if (nchar == ','){
+            if (!snum1.empty() && !snum2.empty()){
+                int num1 = atoi(snum1.c_str()), num2 =atoi(snum2.c_str());
+                if (num2 < num1) std::swap(num1,num2);
+                if (num1 < 0) num1 = 0;
+                for (int ix=num1; ix <= num2; ix++){
+                    corelist.push_back(ix);
+                }
+            }else if (!snum1.empty()){
+                int num1 = atoi(snum1.c_str());
+                corelist.push_back(num1);
+            }
+            snum1.clear();
+            snum2.clear();
+            pnow = &snum1;
+        }else if (nchar != ' '){
+            pnow->push_back(nchar);
+        }
+    }
+    return(corelist);
+}
+
 bool extract_argument_value(const char* arg, std::initializer_list<const char*> arg_names, std::string& value)
 {
     const auto arg_len = strlen(arg);
@@ -836,6 +877,18 @@ std::string dos2unix(std::string in)
         in.erase(in.length() - 1);
     }
     return in;
+}
+
+bool isRegisterEvent(const std::string & pmu)
+{
+    if (pmu == "mmio"
+       || pmu == "pcicfg"
+       || pmu == "package_msr"
+       || pmu == "thread_msr")
+    {
+        return true;
+    }
+    return false;
 }
 
 std::string a_title(const std::string &init, const std::string &name) {
@@ -1086,6 +1139,7 @@ bool get_cpu_bus(uint32 msmDomain, uint32 msmBus, uint32 msmDev, uint32 msmFunc,
     uint32 busNo = 0x0;
 
     //std::cout << "get_cpu_bus: d=" << std::hex << msmDomain << ",b=" << msmBus << ",d=" << msmDev << ",f=" << msmFunc << std::dec << " \n";
+    try {
     PciHandleType h(msmDomain, msmBus, msmDev, msmFunc);
 
     h.read32(SPR_MSM_REG_CPUBUSNO_VALID_OFFSET, &cpuBusValid);
@@ -1126,6 +1180,29 @@ bool get_cpu_bus(uint32 msmDomain, uint32 msmBus, uint32 msmDev, uint32 msmFunc,
     cpuPackageId = sadControlCfg & 0xf;
 
     return true;
+    } catch (...)
+    {
+        std::cerr << "Warning: unable to enumerate CPU Buses" << std::endl;
+        return false;
+    }
+}
+
+std::pair<int64,int64> parseBitsParameter(const char * param)
+{
+    std::pair<int64,int64> bits{-1, -1};
+    const auto bitsArray = pcm::split(std::string(param),':');
+    assert(bitsArray.size() == 2);
+    bits.first = (int64)read_number(bitsArray[0].c_str());
+    bits.second = (int64)read_number(bitsArray[1].c_str());
+    assert(bits.first >= 0);
+    assert(bits.second >= 0);
+    assert(bits.first < 64);
+    assert(bits.second < 64);
+    if (bits.first > bits.second)
+    {
+        std::swap(bits.first, bits.second);
+    }
+    return bits;
 }
 
 #ifdef __linux__
@@ -1217,6 +1294,36 @@ bool readMapFromSysFS(const char * path, std::unordered_map<std::string, uint32>
 
     fclose(f);
     return true;
+}
+#endif
+
+#ifdef _MSC_VER
+
+//! restrict usage of driver to system (SY) and builtin admins (BA)
+void restrictDriverAccessNative(LPCTSTR path)
+{
+    PSECURITY_DESCRIPTOR pSD = nullptr;
+
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
+        _T("O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)"),
+        SDDL_REVISION_1,
+        &pSD,
+        nullptr))
+    {
+        _tprintf(TEXT("Error in ConvertStringSecurityDescriptorToSecurityDescriptor: %d\n"), GetLastError());
+        return;
+    }
+
+    if (SetFileSecurity(path, DACL_SECURITY_INFORMATION, pSD))
+    {
+        // _tprintf(TEXT("Successfully restricted access for %s\n"), path);
+    }
+    else
+    {
+        _tprintf(TEXT("Error in SetFileSecurity for %s. Error %d\n"), path, GetLastError());
+    }
+
+    LocalFree(pSD);
 }
 #endif
 
